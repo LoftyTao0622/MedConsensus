@@ -22,6 +22,7 @@ public class RegisterRequest {
     @DecimalMin("0.0")
     private BigDecimal weight;
 
+    @NotBlank
     private String phone;
 
     private String gender;

@@ -7,6 +7,7 @@ public record PatientProfileDto(
         String name,
         int age,
         double weight,
+        String phone,
         String gender,
         String loginStatus,
         String chiefComplaint,

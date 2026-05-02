@@ -48,9 +48,18 @@ export function submitDoctorReview(payload) {
   });
 }
 
-export function submitConsultation(message, sessionId) {
+export function submitConsultation(message, sessionId, patient) {
   return request("/consultations", {
     method: "POST",
-    body: JSON.stringify({ message, sessionId })
+    body: JSON.stringify({
+      message,
+      sessionId,
+      patientName: patient?.name || "",
+      patientPhone: patient?.phone || "",
+      patientGender: patient?.gender || "",
+      patientAge: patient?.age ? String(patient.age) : "",
+      patientWeight: patient?.weight ? String(patient.weight) : "",
+      chiefComplaint: patient?.chiefComplaint || ""
+    })
   });
 }

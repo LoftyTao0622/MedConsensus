@@ -10,7 +10,7 @@ import java.util.List;
 
 public interface CollectorAgentService {
 
-    ConsultationResponse organize(Long userId, String sessionId, String userMessage);
+    ConsultationResponse organize(Long userId, String sessionId, String userMessage, String patientName);
 
     List<ChatSessionDto> loadSessions(Long userId);
 

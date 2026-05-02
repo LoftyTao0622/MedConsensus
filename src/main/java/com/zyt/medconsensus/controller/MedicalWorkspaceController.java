@@ -56,20 +56,18 @@ public class MedicalWorkspaceController {
     public PatientProfileDto patientProfile(HttpSession session) {
         Puser user = requireCurrentUser(session);
         List<ChatSessionDto> sessions = collectorAgentService.loadSessions(user.getId());
-        String chiefComplaint = sessions.isEmpty() ? "登录后可发起新咨询并补充主诉" : sessions.get(0).title();
+        String chiefComplaint = sessions.isEmpty() ? "" : sessions.get(0).title();
 
         return new PatientProfileDto(
-                "USER-" + user.getId(),
-                user.getUsername(),
-                user.getAge(),
-                user.getWeight().doubleValue(),
-                user.getGender() == null ? "未填写" : user.getGender(),
-                "已登录",
+                "PATIENT-DRAFT",
+                "",
+                0,
+                0,
+                "",
+                "",
+                "患者信息待填写",
                 chiefComplaint,
-                List.of(
-                        user.getPhone() == null ? "电话未填写" : "电话 " + user.getPhone(),
-                        "病情整理 Agent 已启用"
-                )
+                List.of("病情整理 Agent 已启用")
         );
     }
 
@@ -104,7 +102,12 @@ public class MedicalWorkspaceController {
             HttpSession session
     ) {
         Long userId = currentUserId(session);
-        return collectorAgentService.organize(userId, request.getSessionId(), request.getMessage());
+        return collectorAgentService.organize(
+                userId,
+                request.getSessionId(),
+                request.getMessage(),
+                request.getPatientName()
+        );
     }
 
     @PostMapping("/doctor-review")

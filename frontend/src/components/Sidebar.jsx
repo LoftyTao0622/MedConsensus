@@ -2,6 +2,7 @@ import { FilePenLine, Eye, Plus, Trash2 } from "lucide-react";
 
 export function Sidebar({
   patient,
+  onPatientChange,
   sessions,
   activeSessionId,
   consultationInput,
@@ -10,61 +11,102 @@ export function Sidebar({
   onSubmitConsultation,
   onSelectSession,
   onDeleteSession,
-  consultationSubmitting
+  consultationSubmitting,
+  canSubmitConsultation
 }) {
+  function updatePatientField(field, value) {
+    onPatientChange({
+      ...(patient || {}),
+      [field]: value
+    });
+  }
+
   return (
     <aside className="sidebar">
       <section className="glass-card section">
         <div className="section-title">
-          <h2>用户与对话管理</h2>
-          <span className="status-pill success">{patient?.loginStatus || "加载中"}</span>
+          <div>
+            <p className="eyebrow">Patient Input</p>
+            <h2>患者基本信息</h2>
+          </div>
+          <span className="status-pill success">{patient?.loginStatus || "待填写"}</span>
         </div>
 
-        <div className="profile-card">
-          <div className="avatar">{patient?.name?.slice(0, 1) || "医"}</div>
-          <div>
-            <h3>{patient?.name || "患者信息载入中"}</h3>
-            <p>ID {patient?.patientId || "--"}</p>
-          </div>
-        </div>
+        <div className="patient-form">
+          <label className="patient-field full">
+            <span>患者姓名</span>
+            <input
+              value={patient?.name || ""}
+              onChange={(event) => updatePatientField("name", event.target.value)}
+              placeholder="请输入患者姓名或代号"
+            />
+          </label>
 
-        <div className="info-grid">
-          <div>
-            <span>年龄</span>
-            <strong>{patient?.age ?? "--"} 岁</strong>
+          <div className="info-grid patient-info-grid">
+            <label className="patient-field">
+              <span>年龄</span>
+              <input
+                type="number"
+                min="0"
+                value={patient?.age || ""}
+                onChange={(event) => updatePatientField("age", event.target.value)}
+                placeholder="岁"
+              />
+            </label>
+            <label className="patient-field">
+              <span>体重</span>
+              <input
+                type="number"
+                min="0"
+                step="0.1"
+                value={patient?.weight || ""}
+                onChange={(event) => updatePatientField("weight", event.target.value)}
+                placeholder="kg"
+              />
+            </label>
+            <label className="patient-field">
+              <span>性别</span>
+              <select
+                value={patient?.gender || ""}
+                onChange={(event) => updatePatientField("gender", event.target.value)}
+              >
+                <option value="">请选择</option>
+                <option value="男">男</option>
+                <option value="女">女</option>
+                <option value="其他">其他</option>
+              </select>
+            </label>
           </div>
-          <div>
-            <span>体重</span>
-            <strong>{patient?.weight ?? "--"} kg</strong>
-          </div>
-          <div>
-            <span>性别</span>
-            <strong>{patient?.gender || "--"}</strong>
-          </div>
-        </div>
 
-        <div className="chief-complaint-card">
-          <span>主诉</span>
-          <p>{patient?.chiefComplaint || "--"}</p>
-        </div>
+          <label className="patient-field full">
+            <span>患者电话</span>
+            <input
+              type="tel"
+              value={patient?.phone || ""}
+              onChange={(event) => updatePatientField("phone", event.target.value)}
+              placeholder="请输入患者联系电话"
+            />
+          </label>
 
-        <div className="tag-list">
-          {(patient?.highlights || []).map((item) => (
-            <span key={item} className="tag">
-              {item}
-            </span>
-          ))}
+          <label className="patient-field full">
+            <span>主诉</span>
+            <textarea
+              value={patient?.chiefComplaint || ""}
+              onChange={(event) => updatePatientField("chiefComplaint", event.target.value)}
+              placeholder="例如：8岁男孩，近1个月体重明显增加，食量大，不爱运动，吃完饭常躺着。"
+            />
+          </label>
         </div>
       </section>
 
       <section className="glass-card section">
         <div className="section-title">
-          <h2>多对话管理</h2>
+          <h2>患者诊断管理</h2>
         </div>
 
         <button className="primary-button full" type="button" onClick={onStartNewConsultation}>
           <Plus size={18} />
-          发起新咨询
+          新建患者诊断
         </button>
 
         <div className="consultation-composer">
@@ -75,16 +117,16 @@ export function Sidebar({
             placeholder={
               activeSessionId
                 ? "继续补充病情、检查结果、用药情况或既往史..."
-                : "请输入本次咨询的症状、病程、既往病史或检查依据..."
+                : "填写患者基本信息后，可在这里补充检查结果、既往史或用药情况..."
             }
           />
           <button
             className="secondary-button full"
             type="button"
             onClick={onSubmitConsultation}
-            disabled={consultationSubmitting || !consultationInput.trim()}
+            disabled={consultationSubmitting || !canSubmitConsultation}
           >
-            {consultationSubmitting ? "整理中..." : activeSessionId ? "继续整理病情" : "提交给病情整理 Agent"}
+            {consultationSubmitting ? "整理中..." : activeSessionId ? "继续整理该患者病情" : "提交该患者诊断"}
           </button>
         </div>
 

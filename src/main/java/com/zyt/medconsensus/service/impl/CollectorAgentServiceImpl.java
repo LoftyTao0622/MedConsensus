@@ -115,7 +115,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
     }
 
     @Override
-    public ConsultationResponse organize(Long userId, String sessionId, String userMessage) {
+    public ConsultationResponse organize(Long userId, String sessionId, String userMessage, String patientName) {
         if (userId == null) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "当前未登录");
         }
@@ -147,7 +147,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         SessionSnapshot sessionSnapshot = upsertSession(
                 userId,
                 resolvedSessionId,
-                result.value("title", summarizeTitle(userMessage)),
+                sessionTitle(patientName, result.value("title", summarizeTitle(userMessage))),
                 result.value("sessionStatus", "病情整理中"),
                 LocalDateTime.now().format(TIME_FORMATTER)
         );
@@ -278,7 +278,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         upsertSession(
                 userId,
                 request.getSessionId(),
-                StringUtils.hasText(request.getChiefComplaint()) ? summarizeTitle(request.getChiefComplaint()) : "已完成诊断",
+                currentSessionTitle(userId, request.getSessionId(), "已完成诊断"),
                 "已形成最终结论",
                 LocalDateTime.now().format(TIME_FORMATTER)
         );
@@ -766,6 +766,22 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
     private String summarizeTitle(String message) {
         String cleaned = message.replaceAll("\\s+", " ").trim();
         return cleaned.length() <= 12 ? cleaned : cleaned.substring(0, 12) + "...";
+    }
+
+    private String sessionTitle(String patientName, String fallback) {
+        if (StringUtils.hasText(patientName)) {
+            return patientName.trim();
+        }
+        return StringUtils.hasText(fallback) ? fallback : "未命名患者";
+    }
+
+    private String currentSessionTitle(Long userId, String sessionId, String fallback) {
+        return loadSessionSnapshots(userId).stream()
+                .filter(session -> session.id().equals(sessionId))
+                .map(SessionSnapshot::title)
+                .filter(StringUtils::hasText)
+                .findFirst()
+                .orElse(fallback);
     }
 
     private String newSessionId() {

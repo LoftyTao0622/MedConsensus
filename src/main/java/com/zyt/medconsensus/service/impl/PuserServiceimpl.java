@@ -29,13 +29,17 @@ public class PuserServiceimpl implements PuserService {
         if (puserMapper.existsByUsername(username)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "用户名已存在");
         }
+        String phone = normalizePhone(request.getPhone());
+        if (puserMapper.existsByPhone(phone)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "手机号已注册");
+        }
 
         Puser user = new Puser();
         user.setUsername(username);
         user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
         user.setAge(request.getAge());
         user.setWeight(request.getWeight());
-        user.setPhone(blankToNull(request.getPhone()));
+        user.setPhone(phone);
         user.setGender(blankToNull(request.getGender()));
 
         return toResponse(puserMapper.save(user));
@@ -43,12 +47,12 @@ public class PuserServiceimpl implements PuserService {
 
     @Override
     public AuthResponse login(LoginRequest request) {
-        String username = normalizeUsername(request.getUsername());
-        Puser user = puserMapper.findByUsername(username)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "用户名或密码错误"));
+        String phone = normalizePhone(request.getPhone());
+        Puser user = puserMapper.findByPhone(phone)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "手机号或密码错误"));
 
         if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "用户名或密码错误");
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "手机号或密码错误");
         }
 
         return toResponse(user);
@@ -81,6 +85,10 @@ public class PuserServiceimpl implements PuserService {
 
     private String normalizeUsername(String username) {
         return username == null ? null : username.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private String normalizePhone(String phone) {
+        return phone == null ? null : phone.trim();
     }
 
     private String blankToNull(String value) {

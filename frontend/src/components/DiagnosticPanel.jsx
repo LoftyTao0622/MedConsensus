@@ -44,8 +44,8 @@ export function DiagnosticPanel({ diagnosis, pipelineEvents, onSimulate, busy })
           <span className="status-pill warning">{diagnosis?.riskLevel || "待评估"}</span>
           <h3>{diagnosis?.conclusion || "等待系统生成诊断建议"}</h3>
           <p>
-            工作流覆盖信息收集、Diagnosis Agent、Decision Layer 与人类医生审核，
-            即使在低置信度或高风险场景下，也会保留 AI 初步意见并提交给医生定夺。
+            诊断流程覆盖信息收集、大模型诊断、诊断结果决定，医生审核，
+            AI初步意见将会提交给医生并最重由医生定夺。
           </p>
         </div>
 
@@ -57,7 +57,7 @@ export function DiagnosticPanel({ diagnosis, pipelineEvents, onSimulate, busy })
             />
             <div className="gauge-core">
               <strong>{percent(confidence)}</strong>
-              <span>AI 置信度</span>
+              <span>AI诊断置信度</span>
             </div>
           </div>
         </div>
@@ -65,7 +65,7 @@ export function DiagnosticPanel({ diagnosis, pipelineEvents, onSimulate, busy })
 
       <div className="content-grid">
         <div className="content-card">
-          <h3>诊断依据需求说明</h3>
+          <h3>诊断依据说明</h3>
           <ul className="diagnostic-reason-list">
             {filteredAnalysis.map((item) => (
               <li key={item}>{item}</li>
@@ -93,7 +93,7 @@ export function DiagnosticPanel({ diagnosis, pipelineEvents, onSimulate, busy })
       <div className="content-card patient-evidence-card">
         <div className="patient-evidence-header">
           <div>
-            <h3>患者补充诊断依据</h3>
+            <h3>患者诊断依据补充</h3>
             <p className="doctor-copy">
               可补充症状细节、既往病史、检查结果、用药情况或其他有助于诊断的信息。
             </p>

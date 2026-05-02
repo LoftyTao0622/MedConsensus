@@ -7,7 +7,7 @@ export function SessionDetailPanel({ sessionDetail }) {
     return (
       <div className="content-card session-detail-card">
         <h3>会话详情</h3>
-        <p className="doctor-copy">选择左侧会话后，这里会展示 Redis 中保存的完整追问历史与最终结论。</p>
+        <p className="doctor-copy">选择左侧会话后，这里会展示记忆库中保存的完整追问历史与最终结论。</p>
       </div>
     );
   }

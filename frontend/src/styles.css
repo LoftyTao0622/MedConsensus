@@ -347,6 +347,60 @@ textarea {
   color: var(--text-muted);
 }
 
+.patient-form {
+  display: grid;
+  gap: 12px;
+}
+
+.patient-info-grid {
+  margin-top: 0;
+}
+
+.patient-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.patient-field span {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.patient-field input,
+.patient-field select,
+.patient-field textarea {
+  width: 100%;
+  border: 0;
+  outline: none;
+  color: #10324d;
+  background: transparent;
+  font: inherit;
+  font-weight: 800;
+}
+
+.patient-field input::placeholder,
+.patient-field textarea::placeholder {
+  color: rgba(91, 117, 144, 0.72);
+  font-weight: 600;
+}
+
+.patient-field textarea {
+  min-height: 86px;
+  resize: vertical;
+  line-height: 1.7;
+  font-weight: 700;
+}
+
+.patient-field.full {
+  width: 100%;
+}
+
 .chief-complaint-card {
   margin-top: 12px;
   padding: 14px 16px;
@@ -409,8 +463,23 @@ textarea {
   background: rgba(29, 113, 184, 0.1);
 }
 
+.report-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 46px;
+  border: 1px solid rgba(29, 113, 184, 0.22);
+  border-radius: 16px;
+  color: var(--primary-dark);
+  background: rgba(255, 255, 255, 0.76);
+  font-weight: 800;
+  cursor: pointer;
+}
+
 .primary-button:disabled,
-.secondary-button:disabled {
+.secondary-button:disabled,
+.report-button:disabled {
   opacity: 0.6;
   cursor: wait;
 }

@@ -3,7 +3,7 @@ import { HeartPulse, LogIn, UserPlus } from "lucide-react";
 import { loginUser, registerUser } from "../api/auth";
 
 const loginInitialState = {
-  username: "",
+  phone: "",
   password: ""
 };
 
@@ -110,13 +110,15 @@ export function AuthPanel({ onAuthenticated }) {
         {mode === "login" ? (
           <form className="auth-form" onSubmit={handleLoginSubmit}>
             <label>
-              用户名
+              手机号
               <input
-                value={loginForm.username}
+                type="tel"
+                autoComplete="tel"
+                value={loginForm.phone}
                 onChange={(event) =>
-                  updateForm(setLoginForm, loginForm, "username", event.target.value)
+                  updateForm(setLoginForm, loginForm, "phone", event.target.value)
                 }
-                placeholder="请输入用户名"
+                placeholder="请输入注册手机号"
                 required
               />
             </label>
@@ -190,13 +192,16 @@ export function AuthPanel({ onAuthenticated }) {
               />
             </label>
             <label>
-              电话
+              手机号
               <input
+                type="tel"
+                autoComplete="tel"
                 value={registerForm.phone}
                 onChange={(event) =>
                   updateForm(setRegisterForm, registerForm, "phone", event.target.value)
                 }
                 placeholder="手机号"
+                required
               />
             </label>
             <label>

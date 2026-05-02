@@ -1,4 +1,4 @@
-import { CheckCircle2, SendHorizonal } from "lucide-react";
+import { CheckCircle2, FileText, SendHorizonal } from "lucide-react";
 
 export function DoctorPanel({
   activeSessionId,
@@ -8,8 +8,10 @@ export function DoctorPanel({
   onOpinionChange,
   onApprove,
   onSubmit,
+  onGenerateReport,
   feedback,
-  submitting
+  submitting,
+  reportDisabled
 }) {
   const disabled = submitting || !activeSessionId || !diagnosis;
 
@@ -18,14 +20,14 @@ export function DoctorPanel({
       <div className="section-title">
         <div>
           <p className="eyebrow">Doctor's Input</p>
-          <h2>人类医生评判 / 意见</h2>
+          <h2>医生评判 / 意见</h2>
         </div>
         <span className="status-pill info">Human-in-the-loop</span>
       </div>
 
       <p className="doctor-copy">
-        当 AI 置信度偏低、Reviewer 共识分歧明显，或存在高风险病情时，医生可直接给出专业判断，
-        作为最终诊断输出的重要依据。
+        当 AI 置信度偏低、大模型投票共识分歧明显，或存在高风险病情时，医生可直接给出专业判断，
+        作为最终诊断的重要依据。
       </p>
 
       {!activeSessionId || !diagnosis ? (
@@ -54,7 +56,7 @@ export function DoctorPanel({
         className="doctor-textarea"
         value={opinion}
         onChange={(event) => onOpinionChange(event.target.value)}
-        placeholder="请输入医生专业评判、补充检查建议或对 AI 结论的修正意见..."
+        placeholder="请输入专业评判、补充检查建议或对 AI 结论的修正意见..."
         disabled={disabled}
       />
 
@@ -67,6 +69,16 @@ export function DoctorPanel({
         <button className="primary-button full" type="button" onClick={onSubmit} disabled={disabled}>
           <SendHorizonal size={18} />
           提交我的意见
+        </button>
+
+        <button
+          className="report-button full"
+          type="button"
+          onClick={onGenerateReport}
+          disabled={reportDisabled}
+        >
+          <FileText size={18} />
+          生成诊断报告
         </button>
       </div>
 

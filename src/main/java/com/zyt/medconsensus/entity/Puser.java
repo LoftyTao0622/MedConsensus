@@ -31,7 +31,7 @@ public class Puser {
     @Column(nullable = false, precision = 5, scale = 2)
     private BigDecimal weight;
 
-    @Column(length = 20)
+    @Column(length = 20, unique = true)
     private String phone;
 
     @Column(length = 16)

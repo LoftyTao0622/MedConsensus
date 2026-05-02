@@ -8,5 +8,9 @@ public interface PuserMapper extends JpaRepository<Puser, Long> {
 
     Optional<Puser> findByUsername(String username);
 
+    Optional<Puser> findByPhone(String phone);
+
     boolean existsByUsername(String username);
+
+    boolean existsByPhone(String phone);
 }
