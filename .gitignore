@@ -14,6 +14,7 @@ logs/
 # ========================
 application.yml
 application-*.yml
+!src/main/resources/application.yml
 
 # ========================
 # IDE
@@ -64,6 +65,7 @@ application-*.yml
 .env.production
 .env.test
 .env.*.local
+!.env.example
 
 # ========================
 # logs

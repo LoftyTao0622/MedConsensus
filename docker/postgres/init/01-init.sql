@@ -1,3 +1,11 @@
+CREATE DATABASE vector_db;
+
+\connect vector_db
+
+CREATE EXTENSION IF NOT EXISTS vector;
+
+\connect medconsenus
+
 CREATE TABLE IF NOT EXISTS patient_basic_info (
     id BIGSERIAL PRIMARY KEY,
     username VARCHAR(100) NOT NULL,

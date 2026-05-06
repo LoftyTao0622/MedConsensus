@@ -1,0 +1,123 @@
+spring:
+  application:
+    name: MedConsenus
+  data:
+      redis:
+        host: ${REDIS_HOST:127.0.0.1}
+        port: ${REDIS_PORT:6379}
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/medconsenus}
+    username: ${POSTGRES_USER:postgres}
+    password: ${POSTGRES_PASSWORD:123456}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+  ai:
+    openai:
+      api-key: ${API_KEY:}
+      base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      # 主诊断模型：Diagnosis Agent
+      chat:
+        options:
+          model: qwen3.6-plus
+          temperature: 0.2
+
+      # 病情整理模型：信息收集/整理 Agent
+      collector:
+        api-key: ${API_KEY:}
+        base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+        model: deepseek-v4-flash
+        temperature: 0.3
+
+      # Reviewer 评审模型
+      reviewers:
+        qwen:
+          weight: 0.4
+          model: qwen3.6-plus
+          temperature: 0.2
+
+        kimi:
+          weight: 0.3
+          api-key: ${API_KEY:}
+          base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+          model: kimi-k2.6
+          temperature: 0.2
+
+        glm:
+          weight: 0.3
+          api-key: ${API_KEY:}
+          base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+          model: glm-5.1
+          temperature: 0.2
+
+      # 决策层：投票、置信度、风险控制
+      decision:
+        api-key: ${API_KEY:}
+        base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+        model: deepseek-v4-flash
+        temperature: 0.1
+        confidence-threshold: 0.75
+        high-risk-threshold: 0.85
+
+      human-in-the-loop:
+        enabled: true
+        require-doctor-review: true
+server:
+  port: 8086
+app:
+  vector-store:
+    pgvector:
+      host: ${PGVECTOR_HOST:127.0.0.1}
+      port: ${PGVECTOR_PORT:5432}
+      user: ${PGVECTOR_USER:postgres}
+      password: ${PGVECTOR_PASSWORD:123456}
+      database: ${PGVECTOR_DATABASE:vector_db}
+      table: medical_embedding
+      dimension: 1024
+      create-table: true
+      drop-table-first: false
+      use-index: true
+      skip-create-vector-extension: false
+      max-results: 5
+      min-score: 0.6
+  embedding:
+    base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api-key: ${API_KEY:}
+    model: text-embedding-v4
+    batch-size: 10
+    connect-timeout-seconds: 30
+    read-timeout-seconds: 120
+  vector-import:
+    source-path: D:/Medical_AI
+    max-records: 0
+    create-index-after-import: true
+  neo4j:
+    uri: ${NEO4J_URI:bolt://localhost:7687}
+    username: ${NEO4J_USER:neo4j}
+    password: ${NEO4J_PASSWORD:12345678}
+    database: neo4j
+  graph-import:
+    batch-size: 20
+    max-records: 0
+    llm-model: deepseek-v4-flash
+    llm-temperature: 0.1
+    llm-base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    llm-api-key: ${API_KEY:}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+langsmith:
+  enabled: ${LANGSMITH_ENABLED:false}
+  endpoint: ${LANGSMITH_OTEL_ENDPOINT:https://api.smith.langchain.com/otel/v1/traces}
+  api-endpoint: ${LANGSMITH_API_ENDPOINT:https://api.smith.langchain.com/api/v1}
+  project: ${LANGSMITH_PROJECT:MedConsenus}
+  workspace-id: ${LANGSMITH_WORKSPACE_ID:}
+  organization-id: ${LANGSMITH_ORGANIZATION_ID:}
+  service-name: ${LANGSMITH_SERVICE_NAME:medconsenus-backend}
+  capture-content: ${LANGSMITH_CAPTURE_CONTENT:false}
+  timeout: ${LANGSMITH_TIMEOUT:60s}
+  otel-enabled: ${LANGSMITH_OTEL_ENABLED:false}

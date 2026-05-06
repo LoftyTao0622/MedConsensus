@@ -1,12 +1,8 @@
 import { Client } from "@stomp/stompjs";
 
 function resolveBrokerUrl() {
-  if (window.location.port === "8086") {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    return `${protocol}//${window.location.hostname}:8086/ws/diagnosis`;
-  }
-
-  return "ws://127.0.0.1:8086/ws/diagnosis";
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.host}/ws/diagnosis`;
 }
 
 export function connectPipelineSocket(onMessage) {
