@@ -6,11 +6,12 @@ import com.zyt.medconsensus.dto.ConsultationResponse;
 import com.zyt.medconsensus.dto.DiagnosticResponse;
 import com.zyt.medconsensus.dto.DoctorReviewRequest;
 import com.zyt.medconsensus.dto.FinalDiagnosisRecordDto;
-import com.zyt.medconsensus.dto.PatientProfileDto;
+import com.zyt.medconsensus.dto.PatientBasicInfoDto;
+import com.zyt.medconsensus.dto.PatientBasicInfoRequest;
 import com.zyt.medconsensus.dto.PipelineEvent;
 import com.zyt.medconsensus.dto.SessionDetailResponse;
-import com.zyt.medconsensus.entity.Puser;
-import com.zyt.medconsensus.mapper.PuserMapper;
+import com.zyt.medconsensus.entity.PatientBasicInfo;
+import com.zyt.medconsensus.mapper.PatientBasicInfoMapper;
 import com.zyt.medconsensus.observability.LangSmithTracingService;
 import com.zyt.medconsensus.service.CollectorAgentService;
 import jakarta.servlet.http.HttpSession;
@@ -24,6 +25,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -37,37 +39,65 @@ public class MedicalWorkspaceController {
 
     private final SimpMessagingTemplate messagingTemplate;
     private final CollectorAgentService collectorAgentService;
-    private final PuserMapper puserMapper;
+    private final PatientBasicInfoMapper patientBasicInfoMapper;
     private final LangSmithTracingService tracingService;
 
     public MedicalWorkspaceController(
             SimpMessagingTemplate messagingTemplate,
             CollectorAgentService collectorAgentService,
-            PuserMapper puserMapper,
+            PatientBasicInfoMapper patientBasicInfoMapper,
             LangSmithTracingService tracingService
     ) {
         this.messagingTemplate = messagingTemplate;
         this.collectorAgentService = collectorAgentService;
-        this.puserMapper = puserMapper;
+        this.patientBasicInfoMapper = patientBasicInfoMapper;
         this.tracingService = tracingService;
     }
 
-    @GetMapping("/patient")
-    public PatientProfileDto patientProfile(HttpSession session) {
-        Puser user = requireCurrentUser(session);
-        List<ChatSessionDto> sessions = collectorAgentService.loadSessions(user.getId());
-        String chiefComplaint = sessions.isEmpty() ? "" : sessions.get(0).title();
+    @GetMapping("/patients")
+    public List<PatientBasicInfoDto> patients(HttpSession session) {
+        Long doctorId = currentUserId(session);
+        return patientBasicInfoMapper.findByDoctorIdOrderByUpdateTimeDesc(doctorId).stream()
+                .map(this::toPatientDto)
+                .toList();
+    }
 
-        return new PatientProfileDto(
-                "PATIENT-DRAFT",
-                "",
-                0,
-                0,
-                "",
-                "",
-                "患者信息待填写",
-                chiefComplaint,
-                List.of("病情整理 Agent 已启用")
+    @PostMapping("/patients")
+    public PatientBasicInfoDto createPatient(
+            @Valid @RequestBody PatientBasicInfoRequest request,
+            HttpSession session
+    ) {
+        Long doctorId = currentUserId(session);
+        PatientBasicInfo patient = new PatientBasicInfo();
+        patient.setDoctorId(doctorId);
+        applyPatientRequest(patient, request);
+        return toPatientDto(patientBasicInfoMapper.save(patient));
+    }
+
+    @PutMapping("/patients/{patientId}")
+    public PatientBasicInfoDto updatePatient(
+            @PathVariable Long patientId,
+            @Valid @RequestBody PatientBasicInfoRequest request,
+            HttpSession session
+    ) {
+        Long doctorId = currentUserId(session);
+        PatientBasicInfo patient = patientBasicInfoMapper.findByIdAndDoctorId(patientId, doctorId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "患者不存在"));
+        applyPatientRequest(patient, request);
+        return toPatientDto(patientBasicInfoMapper.save(patient));
+    }
+
+    @DeleteMapping("/patients/{patientId}")
+    public Map<String, Object> deletePatient(@PathVariable Long patientId, HttpSession session) {
+        Long doctorId = currentUserId(session);
+        if (!patientBasicInfoMapper.existsByIdAndDoctorId(patientId, doctorId)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "患者不存在");
+        }
+        patientBasicInfoMapper.deleteById(patientId);
+        return Map.of(
+                "success", true,
+                "patientId", patientId,
+                "message", "患者信息已删除"
         );
     }
 
@@ -186,9 +216,33 @@ public class MedicalWorkspaceController {
         throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "当前未登录");
     }
 
-    private Puser requireCurrentUser(HttpSession session) {
-        Long userId = currentUserId(session);
-        return puserMapper.findById(userId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "登录状态已失效"));
+    private void applyPatientRequest(PatientBasicInfo patient, PatientBasicInfoRequest request) {
+        patient.setPatientName(request.getName().trim());
+        patient.setGender(request.getGender().trim());
+        patient.setAge(request.getAge());
+        patient.setWeight(request.getWeight());
+        patient.setPhone(blankToNull(request.getPhone()));
+        patient.setChiefComplaint(blankToNull(request.getChiefComplaint()));
+    }
+
+    private PatientBasicInfoDto toPatientDto(PatientBasicInfo patient) {
+        return new PatientBasicInfoDto(
+                patient.getId(),
+                patient.getPatientName(),
+                patient.getGender(),
+                patient.getAge(),
+                patient.getWeight() == null ? "" : patient.getWeight().toPlainString(),
+                patient.getPhone(),
+                patient.getChiefComplaint(),
+                patient.getCreateTime() == null ? null : patient.getCreateTime().toString(),
+                patient.getUpdateTime() == null ? null : patient.getUpdateTime().toString()
+        );
+    }
+
+    private String blankToNull(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
     }
 }

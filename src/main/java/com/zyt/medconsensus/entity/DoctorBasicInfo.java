@@ -8,12 +8,11 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
-import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 
 @Entity
-@Table(name = "patient_basic_info")
-public class Puser {
+@Table(name = "doctor_basic_info")
+public class DoctorBasicInfo {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -25,17 +24,14 @@ public class Puser {
     @Column(name = "password_hash", nullable = false, length = 255)
     private String passwordHash;
 
-    @Column(nullable = false)
-    private Integer age;
-
-    @Column(nullable = false, precision = 5, scale = 2)
-    private BigDecimal weight;
-
-    @Column(length = 20, unique = true)
+    @Column(nullable = false, unique = true, length = 20)
     private String phone;
 
-    @Column(length = 16)
-    private String gender;
+    @Column(length = 100)
+    private String department;
+
+    @Column(length = 100)
+    private String title;
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
@@ -79,22 +75,6 @@ public class Puser {
         this.passwordHash = passwordHash;
     }
 
-    public Integer getAge() {
-        return age;
-    }
-
-    public void setAge(Integer age) {
-        this.age = age;
-    }
-
-    public BigDecimal getWeight() {
-        return weight;
-    }
-
-    public void setWeight(BigDecimal weight) {
-        this.weight = weight;
-    }
-
     public String getPhone() {
         return phone;
     }
@@ -103,12 +83,20 @@ public class Puser {
         this.phone = phone;
     }
 
-    public String getGender() {
-        return gender;
+    public String getDepartment() {
+        return department;
     }
 
-    public void setGender(String gender) {
-        this.gender = gender;
+    public void setDepartment(String department) {
+        this.department = department;
+    }
+
+    public String getTitle() {
+        return title;
+    }
+
+    public void setTitle(String title) {
+        this.title = title;
     }
 
     public OffsetDateTime getCreatedAt() {

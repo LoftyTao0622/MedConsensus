@@ -3,9 +3,9 @@ package com.zyt.medconsensus.service.impl;
 import com.zyt.medconsensus.dto.AuthResponse;
 import com.zyt.medconsensus.dto.LoginRequest;
 import com.zyt.medconsensus.dto.RegisterRequest;
-import com.zyt.medconsensus.entity.Puser;
-import com.zyt.medconsensus.mapper.PuserMapper;
-import com.zyt.medconsensus.service.PuserService;
+import com.zyt.medconsensus.entity.DoctorBasicInfo;
+import com.zyt.medconsensus.mapper.DoctorBasicInfoMapper;
+import com.zyt.medconsensus.service.DoctorService;
 import java.util.Locale;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -13,49 +13,48 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
-public class PuserServiceimpl implements PuserService {
+public class DoctorServiceImpl implements DoctorService {
 
-    private final PuserMapper puserMapper;
+    private final DoctorBasicInfoMapper doctorBasicInfoMapper;
     private final PasswordEncoder passwordEncoder;
 
-    public PuserServiceimpl(PuserMapper puserMapper, PasswordEncoder passwordEncoder) {
-        this.puserMapper = puserMapper;
+    public DoctorServiceImpl(DoctorBasicInfoMapper doctorBasicInfoMapper, PasswordEncoder passwordEncoder) {
+        this.doctorBasicInfoMapper = doctorBasicInfoMapper;
         this.passwordEncoder = passwordEncoder;
     }
 
     @Override
     public AuthResponse register(RegisterRequest request) {
         String username = normalizeUsername(request.getUsername());
-        if (puserMapper.existsByUsername(username)) {
+        if (doctorBasicInfoMapper.existsByUsername(username)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "用户名已存在");
         }
         String phone = normalizePhone(request.getPhone());
-        if (puserMapper.existsByPhone(phone)) {
+        if (doctorBasicInfoMapper.existsByPhone(phone)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "手机号已注册");
         }
 
-        Puser user = new Puser();
-        user.setUsername(username);
-        user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
-        user.setAge(request.getAge());
-        user.setWeight(request.getWeight());
-        user.setPhone(phone);
-        user.setGender(blankToNull(request.getGender()));
+        DoctorBasicInfo doctor = new DoctorBasicInfo();
+        doctor.setUsername(username);
+        doctor.setPasswordHash(passwordEncoder.encode(request.getPassword()));
+        doctor.setPhone(phone);
+        doctor.setDepartment(blankToNull(request.getDepartment()));
+        doctor.setTitle(blankToNull(request.getTitle()));
 
-        return toResponse(puserMapper.save(user));
+        return toResponse(doctorBasicInfoMapper.save(doctor));
     }
 
     @Override
     public AuthResponse login(LoginRequest request) {
         String phone = normalizePhone(request.getPhone());
-        Puser user = puserMapper.findByPhone(phone)
+        DoctorBasicInfo doctor = doctorBasicInfoMapper.findByPhone(phone)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "手机号或密码错误"));
 
-        if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
+        if (!passwordEncoder.matches(request.getPassword(), doctor.getPasswordHash())) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "手机号或密码错误");
         }
 
-        return toResponse(user);
+        return toResponse(doctor);
     }
 
     @Override
@@ -64,22 +63,21 @@ public class PuserServiceimpl implements PuserService {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "当前未登录");
         }
 
-        Puser user = puserMapper.findById(userId)
+        DoctorBasicInfo doctor = doctorBasicInfoMapper.findById(userId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "登录状态已失效"));
 
-        return toResponse(user);
+        return toResponse(doctor);
     }
 
-    private AuthResponse toResponse(Puser user) {
+    private AuthResponse toResponse(DoctorBasicInfo doctor) {
         return new AuthResponse(
-                user.getId(),
-                user.getUsername(),
-                user.getAge(),
-                user.getWeight().toPlainString(),
-                user.getPhone(),
-                user.getGender(),
-                user.getCreatedAt() != null ? user.getCreatedAt().toString() : null,
-                user.getUpdatedAt() != null ? user.getUpdatedAt().toString() : null
+                doctor.getId(),
+                doctor.getUsername(),
+                doctor.getPhone(),
+                doctor.getDepartment(),
+                doctor.getTitle(),
+                doctor.getCreatedAt() != null ? doctor.getCreatedAt().toString() : null,
+                doctor.getUpdatedAt() != null ? doctor.getUpdatedAt().toString() : null
         );
     }
 

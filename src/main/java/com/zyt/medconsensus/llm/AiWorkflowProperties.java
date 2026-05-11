@@ -13,6 +13,7 @@ public class AiWorkflowProperties {
     private Collector collector = new Collector();
     private Reviewers reviewers = new Reviewers();
     private Decision decision = new Decision();
+    private Treatment treatment = new Treatment();
 
     public String getApiKey() {
         return apiKey;
@@ -60,6 +61,14 @@ public class AiWorkflowProperties {
 
     public void setDecision(Decision decision) {
         this.decision = decision;
+    }
+
+    public Treatment getTreatment() {
+        return treatment;
+    }
+
+    public void setTreatment(Treatment treatment) {
+        this.treatment = treatment;
     }
 
     public static class Chat {
@@ -266,6 +275,45 @@ public class AiWorkflowProperties {
 
         public void setHighRiskThreshold(double highRiskThreshold) {
             this.highRiskThreshold = highRiskThreshold;
+        }
+    }
+
+    public static class Treatment {
+        private String apiKey;
+        private String baseUrl;
+        private String model;
+        private double temperature = 0.2;
+
+        public String getApiKey() {
+            return apiKey;
+        }
+
+        public void setApiKey(String apiKey) {
+            this.apiKey = apiKey;
+        }
+
+        public String getBaseUrl() {
+            return baseUrl;
+        }
+
+        public void setBaseUrl(String baseUrl) {
+            this.baseUrl = baseUrl;
+        }
+
+        public String getModel() {
+            return model;
+        }
+
+        public void setModel(String model) {
+            this.model = model;
+        }
+
+        public double getTemperature() {
+            return temperature;
+        }
+
+        public void setTemperature(double temperature) {
+            this.temperature = temperature;
         }
     }
 }

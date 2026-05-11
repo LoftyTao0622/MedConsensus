@@ -13,6 +13,7 @@ spring:
   jpa:
     hibernate:
       ddl-auto: update
+
     show-sql: false
   ai:
     openai:
@@ -64,6 +65,13 @@ spring:
       human-in-the-loop:
         enabled: true
         require-doctor-review: true
+
+      # Treatment Agent：医生最终诊断后生成开药/治疗说明
+      treatment:
+        api-key: ${MIMO_API_KEY:}
+        base-url: https://token-plan-cn.xiaomimimo.com/v1
+        model: MiMo-V2.5-Pro
+        temperature: 0.2
 server:
   port: 8086
 app:

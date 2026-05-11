@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zyt.medconsensus.agent.CollectorAgent;
 import com.zyt.medconsensus.agent.DiagnosisAgent;
 import com.zyt.medconsensus.agent.ReviewerAgent;
+import com.zyt.medconsensus.agent.TreatmentAgent;
 import com.zyt.medconsensus.dto.ChatSessionDto;
 import com.zyt.medconsensus.dto.ConsultationResponse;
 import com.zyt.medconsensus.dto.DiagnosticResponse;
@@ -14,12 +15,14 @@ import com.zyt.medconsensus.dto.FinalDiagnosisRecordDto;
 import com.zyt.medconsensus.dto.MessageHistoryDto;
 import com.zyt.medconsensus.dto.PipelineEvent;
 import com.zyt.medconsensus.dto.SessionDetailResponse;
+import com.zyt.medconsensus.entity.DiseaseMedicine;
 import com.zyt.medconsensus.entity.FinalDiagnosisRecord;
 import com.zyt.medconsensus.graph.DiagnosisGraphState;
 import com.zyt.medconsensus.graphkg.MedicalGraphPath;
 import com.zyt.medconsensus.graphkg.MedicalGraphReasoningService;
 import com.zyt.medconsensus.llm.AiWorkflowProperties;
 import com.zyt.medconsensus.llm.MultiModelGateway;
+import com.zyt.medconsensus.mapper.DiseaseMedicineMapper;
 import com.zyt.medconsensus.mapper.FinalDiagnosisRecordMapper;
 import com.zyt.medconsensus.observability.LangSmithTracingService;
 import com.zyt.medconsensus.service.CollectorAgentService;
@@ -61,12 +64,15 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
     private static final String NODE_HUMAN = "human_review";
     private static final String NODE_FINALIZE = "finalize";
 
+    private static final int RECOMMENDED_MEDICINE_LIMIT = 2;
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("MM-dd HH:mm");
     private static final TypeReference<List<SessionSnapshot>> SESSION_LIST_TYPE = new TypeReference<>() {
     };
     private static final TypeReference<List<MessageSnapshot>> MESSAGE_LIST_TYPE = new TypeReference<>() {
     };
     private static final TypeReference<DiagnosticResponse> DIAGNOSIS_TYPE = new TypeReference<>() {
+    };
+    private static final TypeReference<List<String>> STRING_LIST_TYPE = new TypeReference<>() {
     };
 
     private final AiWorkflowProperties properties;
@@ -75,9 +81,11 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
     private final CollectorAgent collectorAgent;
     private final DiagnosisAgent diagnosisAgent;
     private final ReviewerAgent reviewerAgent;
+    private final TreatmentAgent treatmentAgent;
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
     private final SimpMessagingTemplate messagingTemplate;
+    private final DiseaseMedicineMapper diseaseMedicineMapper;
     private final FinalDiagnosisRecordMapper finalDiagnosisRecordMapper;
     private final LangSmithTracingService tracingService;
     private final MedicalGraphReasoningService graphReasoningService;
@@ -90,9 +98,11 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
             CollectorAgent collectorAgent,
             DiagnosisAgent diagnosisAgent,
             ReviewerAgent reviewerAgent,
+            TreatmentAgent treatmentAgent,
             StringRedisTemplate redisTemplate,
             ObjectMapper objectMapper,
             SimpMessagingTemplate messagingTemplate,
+            DiseaseMedicineMapper diseaseMedicineMapper,
             FinalDiagnosisRecordMapper finalDiagnosisRecordMapper,
             LangSmithTracingService tracingService,
             MedicalGraphReasoningService graphReasoningService
@@ -103,9 +113,11 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         this.collectorAgent = collectorAgent;
         this.diagnosisAgent = diagnosisAgent;
         this.reviewerAgent = reviewerAgent;
+        this.treatmentAgent = treatmentAgent;
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
         this.messagingTemplate = messagingTemplate;
+        this.diseaseMedicineMapper = diseaseMedicineMapper;
         this.finalDiagnosisRecordMapper = finalDiagnosisRecordMapper;
         this.tracingService = tracingService;
         this.graphReasoningService = graphReasoningService;
@@ -267,12 +279,19 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         record.setChiefComplaint(request.getChiefComplaint());
         record.setAiConclusion(request.getAiConclusion());
         record.setDoctorOpinion(blankToNull(request.getOpinion()));
-        record.setFinalConclusion(
-                StringUtils.hasText(request.getOpinion()) ? request.getOpinion().trim() : request.getAiConclusion()
-        );
+        String finalConclusion = StringUtils.hasText(request.getOpinion())
+                ? request.getOpinion().trim()
+                : request.getAiConclusion();
+        record.setFinalConclusion(finalConclusion);
         record.setRiskLevel(request.getRiskLevel());
         record.setConfidence(request.getConfidence());
         record.setReviewStatus(StringUtils.hasText(request.getOpinion()) ? "DOCTOR_OVERRIDDEN" : "AI_CONFIRMED");
+
+        emit("TREATMENT", "Treatment Agent 正在根据医生最终诊断生成开药说明", 100);
+        TreatmentAgent.TreatmentOutcome treatment = buildTreatmentAdvice(record);
+        record.setTreatmentKeywords(writeJsonString(treatment.keywords()));
+        record.setTreatmentSource(treatment.source());
+        record.setTreatmentAdvice(treatment.advice());
 
         FinalDiagnosisRecord saved = finalDiagnosisRecordMapper.save(record);
         upsertSession(
@@ -662,6 +681,58 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         return merged;
     }
 
+    private TreatmentAgent.TreatmentOutcome buildTreatmentAdvice(FinalDiagnosisRecord record) {
+        String finalDiagnosis = record.getFinalConclusion();
+        List<String> keywords = tools.extractTreatmentKeywords(finalDiagnosis);
+        List<DiseaseMedicine> medicines = findDiseaseMedicines(keywords);
+
+        if (!medicines.isEmpty()) {
+            return treatmentAgent.fromDatabase(
+                    keywords,
+                    medicines.stream().map(this::formatMedicineRecommendation).toList(),
+                    finalDiagnosis
+            );
+        }
+
+        return treatmentAgent.inferWithModel(
+                treatmentSpec(),
+                keywords,
+                finalDiagnosis,
+                record.getChiefComplaint(),
+                record.getRiskLevel()
+        );
+    }
+
+    private List<DiseaseMedicine> findDiseaseMedicines(List<String> keywords) {
+        Map<String, DiseaseMedicine> unique = new LinkedHashMap<>();
+        for (String keyword : keywords) {
+            diseaseMedicineMapper.findByDiseaseKeyword(keyword, RECOMMENDED_MEDICINE_LIMIT).forEach(medicine -> {
+                String key = medicine.getDiseaseName() + "::" + medicine.getMedicineName();
+                unique.putIfAbsent(key, medicine);
+            });
+            if (unique.size() >= RECOMMENDED_MEDICINE_LIMIT) {
+                break;
+            }
+        }
+        return unique.values().stream().limit(RECOMMENDED_MEDICINE_LIMIT).toList();
+    }
+
+    private String formatMedicineRecommendation(DiseaseMedicine medicine) {
+        List<String> parts = new ArrayList<>();
+        parts.add("疾病：" + medicine.getDiseaseName());
+        parts.add("药物：" + medicine.getMedicineName());
+        addLabeledText(parts, "作用", medicine.getMedicineEffect());
+        addLabeledText(parts, "用法用量", medicine.getDosageUsage());
+        addLabeledText(parts, "禁忌/注意", medicine.getContraindication());
+        return String.join("；", parts);
+    }
+
+    private void addLabeledText(List<String> parts, String label, String value) {
+        if (StringUtils.hasText(value)) {
+            parts.add(label + "：" + value.trim());
+        }
+    }
+
     private MultiModelGateway.ModelSpec collectorSpec() {
         return new MultiModelGateway.ModelSpec(
                 defaultIfBlank(properties.getCollector().getApiKey(), properties.getApiKey()),
@@ -695,6 +766,15 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
                 defaultIfBlank(properties.getDecision().getBaseUrl(), properties.getBaseUrl()),
                 properties.getDecision().getModel(),
                 properties.getDecision().getTemperature()
+        );
+    }
+
+    private MultiModelGateway.ModelSpec treatmentSpec() {
+        return new MultiModelGateway.ModelSpec(
+                defaultIfBlank(properties.getTreatment().getApiKey(), properties.getApiKey()),
+                defaultIfBlank(properties.getTreatment().getBaseUrl(), properties.getBaseUrl()),
+                properties.getTreatment().getModel(),
+                properties.getTreatment().getTemperature()
         );
     }
 
@@ -848,6 +928,25 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         }
     }
 
+    private String writeJsonString(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (JsonProcessingException exception) {
+            return "[]";
+        }
+    }
+
+    private List<String> readStringList(String json) {
+        if (!StringUtils.hasText(json)) {
+            return List.of();
+        }
+        try {
+            return objectMapper.readValue(json, STRING_LIST_TYPE);
+        } catch (JsonProcessingException exception) {
+            return List.of();
+        }
+    }
+
     private String sessionKey(Long userId) {
         return "medconsenus:collector:sessions:" + userId;
     }
@@ -899,6 +998,9 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
                 record.getRiskLevel(),
                 record.getConfidence(),
                 record.getReviewStatus(),
+                readStringList(record.getTreatmentKeywords()),
+                record.getTreatmentSource(),
+                record.getTreatmentAdvice(),
                 record.getUpdatedAt() != null ? record.getUpdatedAt().toString() : null
         );
     }

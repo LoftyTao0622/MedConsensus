@@ -1,5 +1,7 @@
 package com.zyt.medconsensus.tool;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.springframework.stereotype.Component;
@@ -70,6 +72,32 @@ public class MedicalWorkflowTools {
             route = "finalize";
         }
         return new VotingResult(finalConfidence, route);
+    }
+
+    public List<String> extractTreatmentKeywords(String text) {
+        String content = text == null ? "" : text.trim();
+        Map<String, List<String>> aliases = new LinkedHashMap<>();
+        aliases.put("发热", List.of("发热", "发烧", "高热", "低热", "体温升高"));
+        aliases.put("肺炎", List.of("肺炎", "社区获得性肺炎", "支气管肺炎"));
+        aliases.put("咳嗽", List.of("咳嗽", "咳痰", "黄痰", "干咳"));
+        aliases.put("哮喘", List.of("哮喘", "喘息", "气道高反应"));
+        aliases.put("上呼吸道感染", List.of("上呼吸道感染", "感冒", "咽痛", "鼻塞", "流涕"));
+        aliases.put("支气管炎", List.of("支气管炎", "急性支气管炎"));
+        aliases.put("糖尿病", List.of("糖尿病", "血糖升高", "高血糖"));
+        aliases.put("高血压", List.of("高血压", "血压升高"));
+        aliases.put("肥胖", List.of("肥胖", "超重", "体重明显增加"));
+
+        List<String> keywords = new ArrayList<>();
+        aliases.forEach((keyword, words) -> {
+            if (words.stream().anyMatch(content::contains)) {
+                keywords.add(keyword);
+            }
+        });
+
+        if (keywords.isEmpty() && content.length() > 0) {
+            keywords.add(content.length() <= 24 ? content : content.substring(0, 24));
+        }
+        return keywords.stream().distinct().limit(8).toList();
     }
 
     private double asDouble(Object value) {

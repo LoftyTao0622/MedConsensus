@@ -58,6 +58,81 @@ set MAVEN_OPTS=-Djava.net.preferIPv4Stack=true
 - `LANGSMITH_CAPTURE_CONTENT=false` 时，只发送流程拓扑和元数据，更适合当前医疗场景。
 - 如果你确认可以把提示词和部分文本送到 LangSmith，再改成 `true`。
 
+## Docker 部署
+
+部署文件保持在当前目录结构中：
+
+- `docker/deploy/Dockerfile`：构建前端静态资源并打包 Spring Boot 应用
+- `docker/deploy/docker-compose.yml`：启动 app、Postgres、Redis、Neo4j，可选 nginx
+- `docker/deploy/nginx/medconsensus.conf`：nginx 反向代理配置
+- `docker/postgres/init/01-init.sql`：Postgres 首次初始化脚本
+- `.dockerignore`：构建镜像时裁剪上下文
+
+### 准备环境变量
+
+编辑 `docker/deploy/.env`，至少填写：
+
+- `API_KEY`
+- `MIMO_API_KEY`
+- `POSTGRES_PASSWORD`
+- `NEO4J_PASSWORD`
+
+### 构建并推送应用镜像
+
+在本地或 CI 环境执行，云服务器不需要执行这一步：
+
+```bash
+docker build -f docker/deploy/Dockerfile -t your-registry.example.com/medconsensus:dev .
+docker push your-registry.example.com/medconsensus:dev
+```
+
+然后在云服务器的 `docker/deploy/.env` 中设置同一个镜像：
+
+```bash
+APP_IMAGE=your-registry.example.com/medconsensus:dev
+```
+
+### 直接暴露后端端口
+
+```bash
+cd docker/deploy
+docker compose pull
+docker compose up -d
+```
+
+默认访问：
+
+- 应用：`http://localhost:8086`
+- Postgres：`localhost:5432`
+- Redis：`localhost:6379`
+- Neo4j Browser：`http://localhost:7474`
+
+### 使用 nginx 反向代理
+
+```bash
+cd docker/deploy
+docker compose --profile proxy pull
+docker compose --profile proxy up -d
+```
+
+默认访问：
+
+- nginx：`http://localhost`
+- 后端仍可通过 `http://localhost:8086` 访问
+
+### 初始化数据说明
+
+`docker/postgres/init/01-init.sql` 只会在 `postgres_data` volume 第一次创建时执行。脚本会初始化：
+
+- `doctor_basic_info`
+- `patient_basic_info`
+- `disease_medicine`
+- `vector_db`
+- `medical_embedding`
+- pgvector 扩展
+
+如果已经启动过数据库，又修改了初始化脚本，需要手动执行 SQL，或删除旧 volume 后重新启动。
+
 ## 后续建议
 
 - 将 `/api/workspace/simulate` 替换为真实 LangGraph 编排入口

@@ -45,6 +45,15 @@ public class FinalDiagnosisRecord {
     @Column(name = "review_status", nullable = false, length = 32)
     private String reviewStatus;
 
+    @Column(name = "treatment_keywords", columnDefinition = "TEXT")
+    private String treatmentKeywords;
+
+    @Column(name = "treatment_source", length = 32)
+    private String treatmentSource;
+
+    @Column(name = "treatment_advice", columnDefinition = "TEXT")
+    private String treatmentAdvice;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 
@@ -141,6 +150,30 @@ public class FinalDiagnosisRecord {
 
     public void setReviewStatus(String reviewStatus) {
         this.reviewStatus = reviewStatus;
+    }
+
+    public String getTreatmentKeywords() {
+        return treatmentKeywords;
+    }
+
+    public void setTreatmentKeywords(String treatmentKeywords) {
+        this.treatmentKeywords = treatmentKeywords;
+    }
+
+    public String getTreatmentSource() {
+        return treatmentSource;
+    }
+
+    public void setTreatmentSource(String treatmentSource) {
+        this.treatmentSource = treatmentSource;
+    }
+
+    public String getTreatmentAdvice() {
+        return treatmentAdvice;
+    }
+
+    public void setTreatmentAdvice(String treatmentAdvice) {
+        this.treatmentAdvice = treatmentAdvice;
     }
 
     public OffsetDateTime getCreatedAt() {

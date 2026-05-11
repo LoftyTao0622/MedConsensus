@@ -6,11 +6,14 @@ import { DoctorPanel } from "./components/DoctorPanel";
 import { AuthPanel } from "./components/AuthPanel";
 import { fetchCurrentUser, logoutUser } from "./api/auth";
 import {
+  createPatient,
+  deletePatient,
   deleteSession,
   fetchDiagnosis,
-  fetchPatientProfile,
+  fetchPatients,
   fetchSessionDetail,
   fetchSessions,
+  updatePatient,
   submitConsultation,
   simulatePipeline,
   submitDoctorReview
@@ -27,6 +30,7 @@ const initialEvents = [
 ];
 
 const emptyPatient = {
+  id: null,
   patientId: "PATIENT-DRAFT",
   name: "",
   age: "",
@@ -38,6 +42,35 @@ const emptyPatient = {
   highlights: ["病情整理 Agent 已启用"]
 };
 
+function patientFromApi(patient) {
+  if (!patient) {
+    return emptyPatient;
+  }
+
+  return {
+    ...emptyPatient,
+    ...patient,
+    patientId: patient.id ? `PATIENT-${patient.id}` : "PATIENT-DRAFT",
+    age: patient.age == null ? "" : String(patient.age),
+    weight: patient.weight == null ? "" : String(patient.weight),
+    phone: patient.phone || "",
+    gender: patient.gender || "",
+    chiefComplaint: patient.chiefComplaint || "",
+    loginStatus: "患者信息已保存"
+  };
+}
+
+function patientPayload(patient) {
+  return {
+    name: patient?.name?.trim() || "",
+    gender: patient?.gender || "",
+    age: patient?.age === "" || patient?.age == null ? null : Number(patient.age),
+    weight: patient?.weight === "" || patient?.weight == null ? null : Number(patient.weight),
+    phone: patient?.phone?.trim() || "",
+    chiefComplaint: patient?.chiefComplaint?.trim() || ""
+  };
+}
+
 function buildConsultationMessage(patient, note) {
   const fields = [
     patient?.name ? `患者姓名：${patient.name}` : "",
@@ -46,7 +79,7 @@ function buildConsultationMessage(patient, note) {
     patient?.gender ? `性别：${patient.gender}` : "",
     patient?.phone ? `患者电话：${patient.phone}` : "",
     patient?.chiefComplaint ? `主诉：${patient.chiefComplaint}` : "",
-    note?.trim() ? `补充病情：${note.trim()}` : ""
+    note?.trim() ? `本次诉求：${note.trim()}` : ""
   ].filter(Boolean);
 
   return fields.join("\n");
@@ -190,6 +223,7 @@ function downloadDiagnosisReport(reportHtml, patientName) {
 
 export default function App() {
   const [patient, setPatient] = useState(null);
+  const [patients, setPatients] = useState([]);
   const [sessions, setSessions] = useState([]);
   const [diagnosis, setDiagnosis] = useState(null);
   const [pipelineEvents, setPipelineEvents] = useState(initialEvents);
@@ -203,9 +237,8 @@ export default function App() {
   const [sessionDetail, setSessionDetail] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
-  const canSubmitConsultation = Boolean(
-    patient?.name?.trim() && (consultationInput.trim() || patient?.chiefComplaint?.trim())
-  );
+  const [patientSaving, setPatientSaving] = useState(false);
+  const canSubmitConsultation = Boolean(patient?.id && patient?.name?.trim() && consultationInput.trim());
 
   useEffect(() => {
     async function restoreSession() {
@@ -229,12 +262,14 @@ export default function App() {
 
     async function bootstrap() {
       const [patientData, sessionData, diagnosisData] = await Promise.all([
-        fetchPatientProfile(),
+        fetchPatients(),
         fetchSessions(),
         fetchDiagnosis()
       ]);
 
-      setPatient(patientData);
+      const normalizedPatients = patientData.map(patientFromApi);
+      setPatients(normalizedPatients);
+      setPatient(normalizedPatients[0] || emptyPatient);
       setSessions(sessionData);
       setDiagnosis(diagnosisData);
     }
@@ -269,6 +304,7 @@ export default function App() {
     } finally {
       setCurrentUser(null);
       setPatient(null);
+      setPatients([]);
       setSessions([]);
       setDiagnosis(null);
       setFeedback("");
@@ -281,13 +317,57 @@ export default function App() {
     }
   }
 
-  function handleStartNewConsultation() {
+  function handleSelectPatient(nextPatient) {
+    setPatient(nextPatient);
     setActiveSessionId(null);
-    setPatient(emptyPatient);
-    setConsultationInput("");
-    setFeedback("");
     setSessionDetail(null);
     setDiagnosis(null);
+    setFeedback("");
+  }
+
+  async function handleSavePatient(nextPatient) {
+    setPatientSaving(true);
+    setFeedback("");
+
+    try {
+      const savedPatient = nextPatient.id
+        ? await updatePatient(nextPatient.id, patientPayload(nextPatient))
+        : await createPatient(patientPayload(nextPatient));
+      const normalizedPatient = patientFromApi(savedPatient);
+      setPatients((current) => {
+        const withoutSaved = current.filter((item) => item.id !== normalizedPatient.id);
+        return [normalizedPatient, ...withoutSaved];
+      });
+      setPatient(normalizedPatient);
+      setFeedback(nextPatient.id ? "患者信息已更新。" : "患者信息已保存。");
+      return normalizedPatient;
+    } catch (error) {
+      setFeedback(`保存患者失败: ${error.message}`);
+      throw error;
+    } finally {
+      setPatientSaving(false);
+    }
+  }
+
+  async function handleDeletePatient(patientId) {
+    setFeedback("");
+
+    try {
+      const response = await deletePatient(patientId);
+      setPatients((current) => {
+        const next = current.filter((item) => item.id !== patientId);
+        if (patient?.id === patientId) {
+          setPatient(next[0] || emptyPatient);
+          setActiveSessionId(null);
+          setSessionDetail(null);
+          setDiagnosis(null);
+        }
+        return next;
+      });
+      setFeedback(response.message);
+    } catch (error) {
+      setFeedback(`删除患者失败: ${error.message}`);
+    }
   }
 
   async function handleDeleteSession(sessionId) {
@@ -404,7 +484,9 @@ export default function App() {
                 ...current,
                 finalRecord: response.finalRecord
               }
-            : current
+            : {
+                finalRecord: response.finalRecord
+              }
         );
       }
       if (!customOpinion) {
@@ -457,17 +539,29 @@ export default function App() {
       <div className="background-orb orb-one" />
       <div className="background-orb orb-two" />
 
-      <Header currentUser={currentUser} onLogout={handleLogout} />
+      <Header
+        currentUser={currentUser}
+        patients={patients}
+        sessions={sessions}
+        onSelectPatient={handleSelectPatient}
+        onSelectSession={handleSelectSession}
+        onLogout={handleLogout}
+      />
 
       <main className="workspace-grid">
         <Sidebar
           patient={patient}
+          patients={patients}
           onPatientChange={setPatient}
+          onSelectPatient={handleSelectPatient}
+          onSavePatient={handleSavePatient}
+          onDeletePatient={handleDeletePatient}
+          patientSaving={patientSaving}
           sessions={sessions}
           activeSessionId={activeSessionId}
+          finalRecord={sessionDetail?.finalRecord}
           consultationInput={consultationInput}
           onConsultationInputChange={setConsultationInput}
-          onStartNewConsultation={handleStartNewConsultation}
           onSubmitConsultation={handleSubmitConsultation}
           onSelectSession={handleSelectSession}
           onDeleteSession={handleDeleteSession}

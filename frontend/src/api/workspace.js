@@ -10,15 +10,37 @@ async function request(path, options = {}) {
     ...options
   });
 
+  const payload = await response.json().catch(() => ({}));
+
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
+    throw new Error(payload.message || `Request failed: ${response.status}`);
   }
 
-  return response.json();
+  return payload;
 }
 
-export function fetchPatientProfile() {
-  return request("/patient");
+export function fetchPatients() {
+  return request("/patients");
+}
+
+export function createPatient(payload) {
+  return request("/patients", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updatePatient(patientId, payload) {
+  return request(`/patients/${patientId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function deletePatient(patientId) {
+  return request(`/patients/${patientId}`, {
+    method: "DELETE"
+  });
 }
 
 export function fetchSessions() {

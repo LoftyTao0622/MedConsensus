@@ -4,7 +4,7 @@ import com.zyt.medconsensus.dto.AuthResponse;
 import com.zyt.medconsensus.dto.LoginRequest;
 import com.zyt.medconsensus.dto.RegisterRequest;
 
-public interface PuserService {
+public interface DoctorService {
 
     AuthResponse register(RegisterRequest request);
 

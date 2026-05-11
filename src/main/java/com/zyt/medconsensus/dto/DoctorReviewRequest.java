@@ -27,7 +27,6 @@ public class DoctorReviewRequest {
     @DecimalMax("1.0")
     private Double confidence;
 
-    @NotBlank
     @Size(max = 4000)
     private String opinion;
 

@@ -10,10 +10,9 @@ const loginInitialState = {
 const registerInitialState = {
   username: "",
   password: "",
-  age: "",
-  weight: "",
   phone: "",
-  gender: ""
+  department: "",
+  title: ""
 };
 
 export function AuthPanel({ onAuthenticated }) {
@@ -51,11 +50,7 @@ export function AuthPanel({ onAuthenticated }) {
     setError("");
 
     try {
-      const user = await registerUser({
-        ...registerForm,
-        age: Number(registerForm.age),
-        weight: Number(registerForm.weight)
-      });
+      const user = await registerUser(registerForm);
       onAuthenticated(user);
     } catch (requestError) {
       setError(requestError.message);
@@ -77,7 +72,7 @@ export function AuthPanel({ onAuthenticated }) {
           <p className="eyebrow">Medical Consensus Platform</p>
           <h1>共智专医</h1>
           <p>
-            登录后即可进入 AI 诊断协作台，管理患者基础信息、查看多 Agent 诊断输出，
+            医生登录后即可进入 AI 诊断协作台，管理患者基础信息、查看多 Agent 诊断输出，
             并在医生审核环节提交专业意见。
           </p>
         </div>
@@ -142,13 +137,13 @@ export function AuthPanel({ onAuthenticated }) {
         ) : (
           <form className="auth-form auth-form-grid" onSubmit={handleRegisterSubmit}>
             <label>
-              用户名
+              医生姓名
               <input
                 value={registerForm.username}
                 onChange={(event) =>
                   updateForm(setRegisterForm, registerForm, "username", event.target.value)
                 }
-                placeholder="建议使用拼音或英文用户名"
+                placeholder="请输入医生姓名或登录名"
                 required
               />
             </label>
@@ -161,33 +156,6 @@ export function AuthPanel({ onAuthenticated }) {
                   updateForm(setRegisterForm, registerForm, "password", event.target.value)
                 }
                 placeholder="请输入密码"
-                required
-              />
-            </label>
-            <label>
-              年龄
-              <input
-                type="number"
-                min="0"
-                value={registerForm.age}
-                onChange={(event) =>
-                  updateForm(setRegisterForm, registerForm, "age", event.target.value)
-                }
-                placeholder="年龄"
-                required
-              />
-            </label>
-            <label>
-              体重
-              <input
-                type="number"
-                min="0"
-                step="0.1"
-                value={registerForm.weight}
-                onChange={(event) =>
-                  updateForm(setRegisterForm, registerForm, "weight", event.target.value)
-                }
-                placeholder="体重 (kg)"
                 required
               />
             </label>
@@ -205,18 +173,24 @@ export function AuthPanel({ onAuthenticated }) {
               />
             </label>
             <label>
-              性别
-              <select
-                value={registerForm.gender}
+              科室
+              <input
+                value={registerForm.department}
                 onChange={(event) =>
-                  updateForm(setRegisterForm, registerForm, "gender", event.target.value)
+                  updateForm(setRegisterForm, registerForm, "department", event.target.value)
                 }
-              >
-                <option value="">请选择</option>
-                <option value="男">男</option>
-                <option value="女">女</option>
-                <option value="其他">其他</option>
-              </select>
+                placeholder="例如：儿科、呼吸内科"
+              />
+            </label>
+            <label>
+              职称
+              <input
+                value={registerForm.title}
+                onChange={(event) =>
+                  updateForm(setRegisterForm, registerForm, "title", event.target.value)
+                }
+                placeholder="例如：主治医师"
+              />
             </label>
 
             <button className="primary-button full auth-submit" type="submit" disabled={submitting}>

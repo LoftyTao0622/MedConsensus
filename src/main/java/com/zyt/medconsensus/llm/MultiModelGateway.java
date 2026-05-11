@@ -35,9 +35,11 @@ public class MultiModelGateway {
 
         List<Map<String, String>> payloadMessages = new java.util.ArrayList<>();
         if (StringUtils.hasText(systemPrompt)) {
-            payloadMessages.add(Map.of("role", "system", "MedContent", systemPrompt));
+            payloadMessages.add(Map.of("role", "system", "content", systemPrompt));
         }
-        payloadMessages.addAll(messages);
+        messages.stream()
+                .map(this::toOpenAiMessage)
+                .forEach(payloadMessages::add);
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("model", spec.model());
@@ -57,11 +59,24 @@ public class MultiModelGateway {
                 }
 
                 JsonNode root = objectMapper.readTree(response);
-                return root.path("choices").path(0).path("message").path("MedContent").asText("");
+                JsonNode message = root.path("choices").path(0).path("message");
+                String content = message.path("content").asText("");
+                return StringUtils.hasText(content) ? content : message.path("MedContent").asText("");
             } catch (Exception exception) {
                 return "";
             }
         });
+    }
+
+    private Map<String, String> toOpenAiMessage(Map<String, String> message) {
+        String content = message.get("content");
+        if (!StringUtils.hasText(content)) {
+            content = message.get("MedContent");
+        }
+        return Map.of(
+                "role", message.getOrDefault("role", "user"),
+                "content", content == null ? "" : content
+        );
     }
 
     public record ModelSpec(

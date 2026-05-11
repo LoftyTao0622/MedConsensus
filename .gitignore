@@ -59,7 +59,7 @@ application-*.yml
 # ========================
 # environment variables
 # ========================
-.env
+docker/deploy/.env
 .env.local
 .env.development
 .env.production

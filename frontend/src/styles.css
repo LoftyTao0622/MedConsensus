@@ -157,7 +157,7 @@ textarea {
 
 .topbar {
   position: relative;
-  z-index: 1;
+  z-index: 100;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -201,9 +201,22 @@ textarea {
 }
 
 .topbar-actions {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.topbar-search {
+  position: relative;
+}
+
+.topbar-reminder {
+  position: relative;
+}
+
+.topbar-settings {
+  position: relative;
 }
 
 .icon-button,
@@ -218,6 +231,369 @@ textarea {
   color: var(--primary-dark);
   background: rgba(255, 255, 255, 0.78);
   cursor: pointer;
+}
+
+.topbar-search.active .icon-button {
+  color: white;
+  background: linear-gradient(135deg, #1d71b8, #49a8df);
+}
+
+.topbar-reminder.active .icon-button {
+  color: white;
+  background: linear-gradient(135deg, #1d71b8, #49a8df);
+}
+
+.topbar-settings.active .icon-button {
+  color: white;
+  background: linear-gradient(135deg, #1d71b8, #49a8df);
+}
+
+.reminder-count {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border: 2px solid rgba(248, 252, 255, 0.96);
+  border-radius: 999px;
+  color: white;
+  background: var(--danger);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.search-popover {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  z-index: 200;
+  width: min(360px, calc(100vw - 36px));
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 22px;
+  background: rgba(248, 252, 255, 0.96);
+  box-shadow: 0 22px 48px rgba(28, 88, 145, 0.18);
+}
+
+.search-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  color: var(--primary-dark);
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.search-input-wrap input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: none;
+  color: #10324d;
+  background: transparent;
+  font: inherit;
+  font-weight: 700;
+}
+
+.search-input-wrap input::placeholder {
+  color: rgba(91, 117, 144, 0.72);
+}
+
+.search-results {
+  display: grid;
+  gap: 8px;
+  max-height: 320px;
+  margin-top: 10px;
+  overflow: auto;
+}
+
+.search-result-item {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  width: 100%;
+  border: 0;
+  padding: 10px;
+  border-radius: 16px;
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+}
+
+.search-result-item:hover {
+  background: rgba(217, 236, 251, 0.72);
+}
+
+.search-result-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 13px;
+  color: var(--primary-dark);
+  background: rgba(29, 113, 184, 0.12);
+}
+
+.search-result-item strong,
+.search-result-item small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-result-item strong {
+  color: #10324d;
+  font-size: 14px;
+}
+
+.search-result-item small {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.search-empty {
+  margin: 0;
+  padding: 12px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.reminder-popover {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  z-index: 200;
+  width: min(360px, calc(100vw - 36px));
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 22px;
+  background: rgba(248, 252, 255, 0.96);
+  box-shadow: 0 22px 48px rgba(28, 88, 145, 0.18);
+}
+
+.reminder-form {
+  display: grid;
+  gap: 10px;
+}
+
+.reminder-form label {
+  display: grid;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.reminder-form input {
+  width: 100%;
+  height: 44px;
+  min-width: 0;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  outline: none;
+  color: #10324d;
+  background: rgba(255, 255, 255, 0.86);
+  font: inherit;
+  font-weight: 700;
+}
+
+.reminder-form input::placeholder {
+  color: rgba(91, 117, 144, 0.72);
+}
+
+.reminder-list {
+  display: grid;
+  gap: 8px;
+  max-height: 260px;
+  margin-top: 10px;
+  overflow: auto;
+}
+
+.reminder-item {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 34px;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border-radius: 16px;
+  background: rgba(217, 236, 251, 0.45);
+}
+
+.reminder-item > svg {
+  color: var(--primary-dark);
+}
+
+.reminder-item strong,
+.reminder-item span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reminder-item strong {
+  color: #10324d;
+  font-size: 13px;
+}
+
+.reminder-item span {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.reminder-item .ghost-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+}
+
+.reminder-alert {
+  position: fixed;
+  right: 28px;
+  bottom: 28px;
+  z-index: 50;
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  width: min(520px, calc(100vw - 36px));
+  padding: 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 24px;
+  background: rgba(248, 252, 255, 0.97);
+  box-shadow: 0 24px 60px rgba(28, 88, 145, 0.22);
+  backdrop-filter: blur(20px);
+}
+
+.reminder-alert-icon {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 16px;
+  color: white;
+  background: linear-gradient(135deg, #1d71b8, #49a8df);
+}
+
+.reminder-alert h2 {
+  margin: 0 0 4px;
+  color: #10324d;
+  font-size: 18px;
+}
+
+.reminder-alert p {
+  margin: 0;
+}
+
+.reminder-alert .primary-button {
+  height: 40px;
+  padding: 0 14px;
+}
+
+.settings-popover {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  z-index: 200;
+  width: min(340px, calc(100vw - 36px));
+  padding: 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 22px;
+  background: rgba(248, 252, 255, 0.96);
+  box-shadow: 0 22px 48px rgba(28, 88, 145, 0.18);
+}
+
+.settings-title {
+  margin-bottom: 12px;
+}
+
+.settings-title strong {
+  display: block;
+  color: #10324d;
+  font-size: 18px;
+}
+
+.settings-toggle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 48px;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  min-height: 74px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  text-align: left;
+  color: #10324d;
+  background: rgba(255, 255, 255, 0.78);
+  cursor: pointer;
+}
+
+.settings-toggle:hover {
+  background: rgba(217, 236, 251, 0.56);
+}
+
+.settings-toggle strong,
+.settings-toggle small {
+  display: block;
+}
+
+.settings-toggle strong {
+  font-size: 15px;
+}
+
+.settings-toggle small {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.settings-toggle i {
+  position: relative;
+  width: 48px;
+  height: 28px;
+  border-radius: 999px;
+  background: rgba(91, 117, 144, 0.22);
+  transition: background 180ms ease;
+}
+
+.settings-toggle i::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(248, 252, 255, 0.98);
+  box-shadow: 0 4px 10px rgba(28, 88, 145, 0.18);
+  transition: transform 180ms ease;
+}
+
+.settings-toggle.active {
+  border-color: rgba(29, 113, 184, 0.36);
+  background: rgba(217, 236, 251, 0.68);
+}
+
+.settings-toggle.active i {
+  background: var(--primary);
+}
+
+.settings-toggle.active i::after {
+  transform: translateX(20px);
 }
 
 .user-chip {
@@ -401,6 +777,62 @@ textarea {
   width: 100%;
 }
 
+.patient-form-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 10px;
+}
+
+.patient-list {
+  display: grid;
+  gap: 10px;
+}
+
+.patient-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 56px;
+  padding: 10px 10px 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.68);
+  cursor: pointer;
+}
+
+.patient-list-item.active {
+  border-color: rgba(29, 113, 184, 0.34);
+  background: rgba(217, 236, 251, 0.6);
+}
+
+.patient-name-button {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  color: #10324d;
+  background: transparent;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.patient-list-empty {
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 18px;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.5);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .chief-complaint-card {
   margin-top: 12px;
   padding: 14px 16px;
@@ -534,6 +966,63 @@ textarea {
 
 .ghost-icon.danger {
   color: var(--danger);
+}
+
+.treatment-card {
+  min-height: 300px;
+}
+
+.treatment-title {
+  margin-bottom: 12px;
+}
+
+.treatment-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 14px;
+  color: var(--primary-dark);
+  background: rgba(29, 113, 184, 0.12);
+}
+
+.treatment-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.treatment-meta span {
+  padding: 6px 10px;
+  border-radius: 999px;
+  color: var(--primary-dark);
+  background: rgba(217, 236, 251, 0.78);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.treatment-content {
+  display: grid;
+  gap: 10px;
+  max-height: 360px;
+  overflow: auto;
+  padding-right: 6px;
+}
+
+.treatment-content p,
+.treatment-empty {
+  margin: 0;
+  line-height: 1.7;
+  color: #23425e;
+  font-size: 13px;
+}
+
+.treatment-content p {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
 }
 
 .diagnostic-panel {
@@ -865,8 +1354,164 @@ textarea {
   background: rgba(255, 255, 255, 0.82);
 }
 
+:root.care-mode {
+  --text-muted: #4b6683;
+  --shadow: 0 26px 64px rgba(28, 88, 145, 0.16);
+}
+
+:root.care-mode body {
+  font-size: 18px;
+}
+
+:root.care-mode .app-shell {
+  padding: 32px;
+}
+
+:root.care-mode .workspace-grid {
+  grid-template-columns: 350px minmax(0, 1fr) 360px;
+  gap: 24px;
+}
+
+:root.care-mode .topbar {
+  padding: 20px 24px;
+}
+
+:root.care-mode .brand h1 {
+  font-size: 32px;
+}
+
+:root.care-mode .section-title h2,
+:root.care-mode .hero-card h3,
+:root.care-mode .content-card h3,
+:root.care-mode .profile-card h3 {
+  font-size: 24px;
+}
+
+:root.care-mode .eyebrow {
+  font-size: 14px;
+  letter-spacing: 0.1em;
+}
+
+:root.care-mode .icon-button,
+:root.care-mode .ghost-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+}
+
+:root.care-mode .user-chip {
+  height: 48px;
+  padding: 0 18px;
+  font-size: 17px;
+}
+
+:root.care-mode .primary-button,
+:root.care-mode .secondary-button,
+:root.care-mode .report-button {
+  min-height: 56px;
+  font-size: 18px;
+}
+
+:root.care-mode .auth-form label,
+:root.care-mode .patient-field,
+:root.care-mode .reminder-form label,
+:root.care-mode .settings-toggle strong {
+  font-size: 16px;
+}
+
+:root.care-mode .auth-form input,
+:root.care-mode .auth-form select,
+:root.care-mode .patient-field input,
+:root.care-mode .patient-field select,
+:root.care-mode .patient-field textarea,
+:root.care-mode .consultation-textarea,
+:root.care-mode .doctor-textarea,
+:root.care-mode .patient-evidence-textarea,
+:root.care-mode .search-input-wrap,
+:root.care-mode .reminder-form input {
+  font-size: 18px;
+}
+
+:root.care-mode .auth-form input,
+:root.care-mode .auth-form select,
+:root.care-mode .patient-field input,
+:root.care-mode .patient-field select,
+:root.care-mode .search-input-wrap,
+:root.care-mode .reminder-form input {
+  height: 56px;
+}
+
+:root.care-mode .patient-field textarea,
+:root.care-mode .consultation-textarea,
+:root.care-mode .doctor-textarea,
+:root.care-mode .patient-evidence-textarea {
+  line-height: 1.8;
+}
+
+:root.care-mode .patient-list-item {
+  min-height: 68px;
+}
+
+:root.care-mode .patient-name-button,
+:root.care-mode .search-result-item strong,
+:root.care-mode .reminder-item strong {
+  font-size: 17px;
+}
+
+:root.care-mode .search-result-item small,
+:root.care-mode .reminder-item span,
+:root.care-mode .settings-toggle small,
+:root.care-mode .search-empty,
+:root.care-mode .patient-list-empty,
+:root.care-mode .chief-complaint-card span,
+:root.care-mode .treatment-meta span,
+:root.care-mode .doctor-status,
+:root.care-mode .patient-evidence-preview span,
+:root.care-mode .history-item span,
+:root.care-mode .final-record-grid span {
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+:root.care-mode .hero-card p,
+:root.care-mode .content-card li,
+:root.care-mode .treatment-content p,
+:root.care-mode .treatment-empty,
+:root.care-mode .chief-complaint-card,
+:root.care-mode .doctor-copy,
+:root.care-mode .patient-evidence-card,
+:root.care-mode .patient-evidence-preview p,
+:root.care-mode .history-item p,
+:root.care-mode .final-record-grid p,
+:root.care-mode .reminder-alert p {
+  font-size: 17px;
+  line-height: 1.85;
+}
+
+:root.care-mode .settings-popover,
+:root.care-mode .search-popover,
+:root.care-mode .reminder-popover {
+  width: min(420px, calc(100vw - 36px));
+}
+
+:root.care-mode .reminder-alert {
+  grid-template-columns: 54px minmax(0, 1fr) auto;
+  width: min(620px, calc(100vw - 36px));
+  padding: 18px;
+}
+
+:root.care-mode .reminder-alert-icon {
+  width: 54px;
+  height: 54px;
+}
+
+:root.care-mode .reminder-alert h2 {
+  font-size: 22px;
+}
+
 @media (max-width: 1200px) {
-  .workspace-grid {
+  .workspace-grid,
+  :root.care-mode .workspace-grid {
     grid-template-columns: 280px minmax(0, 1fr);
   }
 
@@ -876,12 +1521,14 @@ textarea {
 }
 
 @media (max-width: 920px) {
-  .app-shell {
+  .app-shell,
+  :root.care-mode .app-shell {
     padding: 18px;
   }
 
   .topbar,
   .workspace-grid,
+  :root.care-mode .workspace-grid,
   .hero-card,
   .content-grid {
     grid-template-columns: 1fr;
@@ -893,9 +1540,49 @@ textarea {
   }
 
   .topbar-actions {
+    position: static;
     width: 100%;
     justify-content: space-between;
     flex-wrap: wrap;
+  }
+
+  .topbar-search,
+  .topbar-reminder,
+  .topbar-settings {
+    position: static;
+  }
+
+  .search-popover,
+  .reminder-popover,
+  .settings-popover,
+  :root.care-mode .search-popover,
+  :root.care-mode .reminder-popover,
+  :root.care-mode .settings-popover {
+    top: auto;
+    right: 18px;
+    left: 18px;
+    width: auto;
+    margin-top: 12px;
+  }
+
+  .reminder-alert,
+  :root.care-mode .reminder-alert {
+    right: 18px;
+    bottom: 18px;
+    left: 18px;
+    grid-template-columns: 40px minmax(0, 1fr);
+    width: auto;
+  }
+
+  .reminder-alert-icon,
+  :root.care-mode .reminder-alert-icon {
+    width: 40px;
+    height: 40px;
+  }
+
+  .reminder-alert .primary-button {
+    grid-column: 1 / -1;
+    width: 100%;
   }
 
   .auth-form-grid {
