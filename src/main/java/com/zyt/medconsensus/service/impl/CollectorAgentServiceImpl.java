@@ -8,6 +8,7 @@ import com.zyt.medconsensus.agent.DiagnosisAgent;
 import com.zyt.medconsensus.agent.ReviewerAgent;
 import com.zyt.medconsensus.agent.TreatmentAgent;
 import com.zyt.medconsensus.dto.ChatSessionDto;
+import com.zyt.medconsensus.dto.ConsultationRequest;
 import com.zyt.medconsensus.dto.ConsultationResponse;
 import com.zyt.medconsensus.dto.DiagnosticResponse;
 import com.zyt.medconsensus.dto.DoctorReviewRequest;
@@ -26,6 +27,7 @@ import com.zyt.medconsensus.mapper.DiseaseMedicineMapper;
 import com.zyt.medconsensus.mapper.FinalDiagnosisRecordMapper;
 import com.zyt.medconsensus.observability.LangSmithTracingService;
 import com.zyt.medconsensus.service.CollectorAgentService;
+import com.zyt.medconsensus.service.PatientSkillService;
 import com.zyt.medconsensus.tool.MedicalWorkflowTools;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -89,6 +91,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
     private final FinalDiagnosisRecordMapper finalDiagnosisRecordMapper;
     private final LangSmithTracingService tracingService;
     private final MedicalGraphReasoningService graphReasoningService;
+    private final PatientSkillService patientSkillService;
     private final CompiledGraph<DiagnosisGraphState> workflow;
 
     public CollectorAgentServiceImpl(
@@ -105,7 +108,8 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
             DiseaseMedicineMapper diseaseMedicineMapper,
             FinalDiagnosisRecordMapper finalDiagnosisRecordMapper,
             LangSmithTracingService tracingService,
-            MedicalGraphReasoningService graphReasoningService
+            MedicalGraphReasoningService graphReasoningService,
+            PatientSkillService patientSkillService
     ) {
         this.properties = properties;
         this.modelGateway = modelGateway;
@@ -121,30 +125,40 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         this.finalDiagnosisRecordMapper = finalDiagnosisRecordMapper;
         this.tracingService = tracingService;
         this.graphReasoningService = graphReasoningService;
+        this.patientSkillService = patientSkillService;
         this.workflow = compileWorkflow();
         // One normal pass already visits multiple nodes; allow room for a retry_collect round-trip.
         this.workflow.setMaxIterations(16);
     }
 
     @Override
-    public ConsultationResponse organize(Long userId, String sessionId, String userMessage, String patientName) {
+    public ConsultationResponse organize(Long userId, ConsultationRequest request) {
         if (userId == null) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "当前未登录");
         }
+        if (request == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "缺少问诊内容");
+        }
+        String userMessage = request.getMessage();
         if (!StringUtils.hasText(userMessage)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "请输入咨询内容");
         }
 
+        String sessionId = request.getSessionId();
         String resolvedSessionId = StringUtils.hasText(sessionId) ? sessionId : newSessionId();
         List<MessageSnapshot> history = loadMessageSnapshots(userId, resolvedSessionId);
         history.add(new MessageSnapshot("user", userMessage.trim()));
         saveMessageSnapshots(userId, resolvedSessionId, history);
+
+        String patientSkill = patientSkillService.buildCurrentContext(request, patientSkillService.loadSkill(request));
 
         Map<String, Object> initialState = new LinkedHashMap<>();
         initialState.put("userId", userId);
         initialState.put("sessionId", resolvedSessionId);
         initialState.put("userMessage", userMessage.trim());
         initialState.put("memory", history.stream().map(MessageSnapshot::content).toList());
+        initialState.put("patientName", request.getPatientName());
+        initialState.put("patientSkill", patientSkill);
         initialState.put("retryCount", 0);
 
         DiagnosisGraphState result = tracingService.traceWorkflow(
@@ -159,7 +173,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         SessionSnapshot sessionSnapshot = upsertSession(
                 userId,
                 resolvedSessionId,
-                sessionTitle(patientName, result.value("title", summarizeTitle(userMessage))),
+                sessionTitle(request.getPatientName(), result.value("title", summarizeTitle(userMessage))),
                 result.value("sessionStatus", "病情整理中"),
                 LocalDateTime.now().format(TIME_FORMATTER)
         );
@@ -181,6 +195,14 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
                 reviewers
         );
         saveDiagnosisSnapshot(userId, resolvedSessionId, diagnosis);
+        patientSkillService.recordConsultation(
+                userId,
+                resolvedSessionId,
+                request,
+                result.value("collectorSummary", ""),
+                analysis,
+                diagnosis
+        );
 
         return new ConsultationResponse(
                 resolvedSessionId,
@@ -388,7 +410,8 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
             CollectorAgent.CollectorOutcome result = collectorAgent.collect(
                     collectorSpec(),
                     latestInput,
-                    memory
+                    memory,
+                    state.value("patientSkill", "")
             );
 
             Map<String, Object> updates = new LinkedHashMap<>();
@@ -462,7 +485,8 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
                     state.value("chiefComplaint", ""),
                     state.value("collectorSummary", ""),
                     stringListValue(state, "structuredAnalysis"),
-                    graphEvidence
+                    graphEvidence,
+                    state.value("patientSkill", "")
             );
 
             return Map.of(
@@ -500,7 +524,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         addIfText(terms, state.value("chiefComplaint", ""));
         addIfText(terms, state.value("collectorSummary", ""));
         stringListValue(state, "structuredAnalysis").forEach(item -> addIfText(terms, item));
-        addKnownGraphTerms(terms, String.join(" ", terms));
+        addKnownGraphTerms(terms, String.join(" ", terms) + " " + state.value("patientSkill", ""));
         return terms.stream()
                 .map(String::trim)
                 .filter(StringUtils::hasText)

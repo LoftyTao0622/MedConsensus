@@ -16,6 +16,8 @@ public class CollectorAgent {
             字段固定为：title, chiefComplaint, summary, structuredAnalysis, followUpQuestions。
             structuredAnalysis 和 followUpQuestions 必须是字符串数组。
             title 应简洁概括本次咨询主题；chiefComplaint 应保留患者主诉核心信息。
+            如果提供了“患者个人 skill”，它代表该患者的长期基础画像、病史、用药史、家族史和生活习惯，
+            请将其作为本患者专属背景来理解本次输入，并在 structuredAnalysis 中体现与本次问诊相关的长期线索。
             仅返回合法 JSON，不要输出 Markdown。
             """;
 
@@ -30,7 +32,8 @@ public class CollectorAgent {
     public CollectorOutcome collect(
             MultiModelGateway.ModelSpec modelSpec,
             String latestInput,
-            List<String> memory
+            List<String> memory,
+            String patientSkill
     ) {
         String content = modelGateway.chat(
                 modelSpec,
@@ -38,11 +41,20 @@ public class CollectorAgent {
                 List.of(Map.of(
                         "role", "user",
                         "MedContent", "最新输入：" + textOrDefault(latestInput, "")
+                                + "\n\n患者个人 skill：\n" + textOrDefault(patientSkill, "暂无")
                                 + "\n\n完整会话记忆：\n" + String.join("\n", memory)
                 ))
         );
 
         return parseCollectorResult(content, latestInput);
+    }
+
+    public CollectorOutcome collect(
+            MultiModelGateway.ModelSpec modelSpec,
+            String latestInput,
+            List<String> memory
+    ) {
+        return collect(modelSpec, latestInput, memory, "");
     }
 
     private CollectorOutcome parseCollectorResult(String content, String fallbackMessage) {

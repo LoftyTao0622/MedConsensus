@@ -27,6 +27,7 @@ application-*.yml
 # ========================
 /tmp/
 /out/
+partiality/*.md
 
 # ========================
 # package

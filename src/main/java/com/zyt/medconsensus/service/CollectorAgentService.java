@@ -1,6 +1,7 @@
 package com.zyt.medconsensus.service;
 
 import com.zyt.medconsensus.dto.ChatSessionDto;
+import com.zyt.medconsensus.dto.ConsultationRequest;
 import com.zyt.medconsensus.dto.ConsultationResponse;
 import com.zyt.medconsensus.dto.DiagnosticResponse;
 import com.zyt.medconsensus.dto.DoctorReviewRequest;
@@ -10,7 +11,7 @@ import java.util.List;
 
 public interface CollectorAgentService {
 
-    ConsultationResponse organize(Long userId, String sessionId, String userMessage, String patientName);
+    ConsultationResponse organize(Long userId, ConsultationRequest request);
 
     List<ChatSessionDto> loadSessions(Long userId);
 

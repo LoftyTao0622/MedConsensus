@@ -75,6 +75,8 @@ spring:
 server:
   port: 8086
 app:
+  patient-skill:
+    directory: partiality
   vector-store:
     pgvector:
       host: ${PGVECTOR_HOST:127.0.0.1}

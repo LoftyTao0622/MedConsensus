@@ -14,6 +14,7 @@ import com.zyt.medconsensus.entity.PatientBasicInfo;
 import com.zyt.medconsensus.mapper.PatientBasicInfoMapper;
 import com.zyt.medconsensus.observability.LangSmithTracingService;
 import com.zyt.medconsensus.service.CollectorAgentService;
+import com.zyt.medconsensus.service.PatientSkillService;
 import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
 import java.time.LocalDateTime;
@@ -41,17 +42,20 @@ public class MedicalWorkspaceController {
     private final CollectorAgentService collectorAgentService;
     private final PatientBasicInfoMapper patientBasicInfoMapper;
     private final LangSmithTracingService tracingService;
+    private final PatientSkillService patientSkillService;
 
     public MedicalWorkspaceController(
             SimpMessagingTemplate messagingTemplate,
             CollectorAgentService collectorAgentService,
             PatientBasicInfoMapper patientBasicInfoMapper,
-            LangSmithTracingService tracingService
+            LangSmithTracingService tracingService,
+            PatientSkillService patientSkillService
     ) {
         this.messagingTemplate = messagingTemplate;
         this.collectorAgentService = collectorAgentService;
         this.patientBasicInfoMapper = patientBasicInfoMapper;
         this.tracingService = tracingService;
+        this.patientSkillService = patientSkillService;
     }
 
     @GetMapping("/patients")
@@ -71,7 +75,9 @@ public class MedicalWorkspaceController {
         PatientBasicInfo patient = new PatientBasicInfo();
         patient.setDoctorId(doctorId);
         applyPatientRequest(patient, request);
-        return toPatientDto(patientBasicInfoMapper.save(patient));
+        PatientBasicInfo saved = patientBasicInfoMapper.save(patient);
+        patientSkillService.recordPatientProfile(saved, true);
+        return toPatientDto(saved);
     }
 
     @PutMapping("/patients/{patientId}")
@@ -84,7 +90,9 @@ public class MedicalWorkspaceController {
         PatientBasicInfo patient = patientBasicInfoMapper.findByIdAndDoctorId(patientId, doctorId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "患者不存在"));
         applyPatientRequest(patient, request);
-        return toPatientDto(patientBasicInfoMapper.save(patient));
+        PatientBasicInfo saved = patientBasicInfoMapper.save(patient);
+        patientSkillService.recordPatientProfile(saved, false);
+        return toPatientDto(saved);
     }
 
     @DeleteMapping("/patients/{patientId}")
@@ -132,12 +140,7 @@ public class MedicalWorkspaceController {
             HttpSession session
     ) {
         Long userId = currentUserId(session);
-        return collectorAgentService.organize(
-                userId,
-                request.getSessionId(),
-                request.getMessage(),
-                request.getPatientName()
-        );
+        return collectorAgentService.organize(userId, request);
     }
 
     @PostMapping("/doctor-review")

@@ -16,6 +16,8 @@ public class DiagnosisAgent {
             你是 Diagnosis Agent，请根据病情整理结果生成初步诊断建议，并以 JSON 返回：
             conclusion, confidence, riskLevel, structuredAnalysis, suggestions。
             confidence 为 0 到 1 的小数；structuredAnalysis、suggestions 为字符串数组。
+            如果提供了“患者个人 skill”，它是该患者长期积累的基础信息、病史、用药史、家族史和生活习惯，
+            请把它作为诊断推理的个体化背景，明确考虑慢病、过敏、职业暴露、生活习惯等风险修饰因素。
             如果提供了 Neo4j 医学知识图谱路径，请优先结合“症状→疾病→治疗/检查”的多跳推理依据，
             但不要把图谱结果当作唯一结论，仍需结合患者主诉和病情整理综合判断。
             仅返回合法 JSON，不要输出 Markdown。
@@ -40,7 +42,8 @@ public class DiagnosisAgent {
             String chiefComplaint,
             String collectorSummary,
             List<String> structuredInformation,
-            List<String> graphEvidence
+            List<String> graphEvidence,
+            String patientSkill
     ) {
         String content = modelGateway.chat(
                 modelSpec,
@@ -50,11 +53,22 @@ public class DiagnosisAgent {
                         "MedContent", "主诉：" + textOrDefault(chiefComplaint, "")
                                 + "\n整理摘要：" + textOrDefault(collectorSummary, "")
                                 + "\n结构化信息：" + structuredInformation
+                                + "\n患者个人 skill：\n" + textOrDefault(patientSkill, "暂无")
                                 + "\nNeo4j图谱多跳依据：" + graphEvidence
                 ))
         );
 
         return parseDiagnosisResult(content, textOrDefault(chiefComplaint, collectorSummary));
+    }
+
+    public DiagnosisOutcome diagnose(
+            MultiModelGateway.ModelSpec modelSpec,
+            String chiefComplaint,
+            String collectorSummary,
+            List<String> structuredInformation,
+            List<String> graphEvidence
+    ) {
+        return diagnose(modelSpec, chiefComplaint, collectorSummary, structuredInformation, graphEvidence, "");
     }
 
     public DiagnosisOutcome diagnose(
