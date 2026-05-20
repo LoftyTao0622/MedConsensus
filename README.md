@@ -26,7 +26,7 @@ MedConsensus 是一个面向医疗问诊辅助场景的**多 Agent 共识诊断�
 ## 核心特性
 
 - **多 Agent 协作** — Collector、Diagnosis、Reviewer、Decision、Treatment 五大角色协同工作
-- **多模型交叉评审** — Qwen、Kimi、GLM 等多模型并行评审，加权投票形成共识
+- **多模型交叉评审** — GPT、Kimi、GLM 等多模型并行评审，加权投票形成共识
 - **Human-in-the-loop** — 医生复核机制，最终结论以医生确认结果为准
 - **知识图谱增强** — Neo4j 医学知识图谱补充诊断证据
 - **向量检索** — pgvector 支持医疗语料语义检索与 RAG 增强
@@ -52,7 +52,7 @@ flowchart TD
     subgraph Agents["多 Agent 层"]
         C["Collector Agent<br/>信息收集与病情整理"]
         D["Diagnosis Agent<br/>AI 初诊"]
-        R["Reviewer Agents<br/>Qwen / Kimi / GLM"]
+        R["Reviewer Agents<br/>GPT / Kimi / GLM"]
         DL["Decision Layer<br/>投票 · 置信度 · 风险控制"]
         T["Treatment Agent<br/>治疗建议生成"]
     end
@@ -91,7 +91,7 @@ flowchart TD
     F --> D
     E -- "充分" --> G["Diagnosis Agent 生成初诊"]
     G --> H["Neo4j 知识图谱补充证据"]
-    H --> I["Qwen / Kimi / GLM 并行评审"]
+    H --> I["GPT / Kimi / GLM 并行评审"]
     I --> J["Decision Layer 投票与风险评估"]
     J --> K{"是否需要人工复核？"}
     K -- "需要" --> L["医生 Human-in-the-loop 审核"]
@@ -166,20 +166,20 @@ MedConsensus/
 
 ## 技术栈
 
-| 层级 | 技术 | 用途 |
-|------|------|------|
-| **运行时** | Java 17 | 后端运行环境 |
-| **后端框架** | Spring Boot 3.3.0 | Web · WebSocket · JPA · Actuator |
-| **AI 编排** | LangGraph4j 1.5.14 | 多 Agent 工作流状态机 |
-| **AI 网关** | Spring AI OpenAI Starter | 统一多模型调用接口 |
-| **LLM 模型** | Qwen3 · DeepSeek · Kimi · GLM · MiMo | 各 Agent 角色模型 |
-| **关系数据库** | PostgreSQL 16 + pgvector | 业务数据 + 向量存储 |
-| **缓存** | Redis 7 | 会话列表 · 对话历史 · 诊断快照 |
-| **知识图谱** | Neo4j 5 | 医学实体关系图谱 |
-| **前端框架** | React 18 + Vite 5 | 医生工作台 SPA |
-| **实时通信** | STOMP WebSocket | 诊断流程实时推送 |
-| **可观测性** | OpenTelemetry + LangSmith | 链路追踪与监控 |
-| **部署** | Docker Compose + Nginx | 一键部署全套服务 |
+| 层级 | 技术                                  | 用途 |
+|------|-------------------------------------|------|
+| **运行时** | Java 17                             | 后端运行环境 |
+| **后端框架** | Spring Boot 3.3.0                   | Web · WebSocket · JPA · Actuator |
+| **AI 编排** | LangGraph4j 1.5.14                  | 多 Agent 工作流状态机 |
+| **AI 网关** | Spring AI OpenAI Starter            | 统一多模型调用接口 |
+| **LLM 模型** | GPT5 · DeepSeek · Kimi · GLM · MiMo | 各 Agent 角色模型 |
+| **关系数据库** | PostgreSQL 16 + pgvector            | 业务数据 + 向量存储 |
+| **缓存** | Redis 7                             | 会话列表 · 对话历史 · 诊断快照 |
+| **知识图谱** | Neo4j 5                             | 医学实体关系图谱 |
+| **前端框架** | React 18 + Vite 5                   | 医生工作台 SPA |
+| **实时通信** | STOMP WebSocket                     | 诊断流程实时推送 |
+| **可观测性** | OpenTelemetry + LangSmith           | 链路追踪与监控 |
+| **部署** | Docker Compose + Nginx              | 一键部署全套服务 |
 
 ---
 
@@ -276,15 +276,15 @@ Vite 开发代理：`/api` → `http://127.0.0.1:8086`，`/ws` → `ws://127.0.0
 
 模型配置集中在 `application.yml` 的 `spring.ai.openai` 下：
 
-| 配置段 | Agent 角色 | 默认模型 |
-|--------|-----------|----------|
-| `chat.options` | Diagnosis Agent（主诊断） | qwen3.6-plus |
-| `collector` | Collector Agent（信息收集） | deepseek-v4-flash |
-| `reviewers.qwen` | Qwen Reviewer（权重 0.4） | qwen3.6-plus |
-| `reviewers.kimi` | Kimi Reviewer（权重 0.3） | kimi-k2.6 |
-| `reviewers.glm` | GLM Reviewer（权重 0.3） | glm-5.1 |
-| `decision` | Decision Layer（决策） | deepseek-v4-flash |
-| `treatment` | Treatment Agent（治疗建议） | MiMo-V2.5-Pro |
+| 配置段              | Agent 角色              | 默认模型              |
+|------------------|-----------------------|-------------------|
+| `chat.options`   | Diagnosis Agent（主诊断）  | GPT-5.4           |
+| `collector`      | Collector Agent（信息收集） | deepseek-v4-flash |
+| `reviewers.gpt`  | GPT Reviewer（权重 0.4）  | GPT-5.4           |
+| `reviewers.kimi` | Kimi Reviewer（权重 0.3） | kimi-k2.6         |
+| `reviewers.glm`  | GLM Reviewer（权重 0.3）  | glm-5.1           |
+| `decision`       | Decision Layer（决策）    | deepseek-v4-flash |
+| `treatment`      | Treatment Agent（治疗建议） | MiMo-V2.5-Pro     |
 
 ---
 
@@ -358,7 +358,7 @@ Vite 开发代理：`/api` → `http://127.0.0.1:8086`，`/ws` → `ws://127.0.0
          │
          ▼
    DashScope / MiMo API
-   (Qwen · DeepSeek · Kimi · GLM)
+   (GPT · DeepSeek · Kimi · GLM)
 ```
 
 ---
