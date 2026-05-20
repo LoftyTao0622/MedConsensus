@@ -10,6 +10,12 @@ spring:
     username: ${POSTGRES_USER:postgres}
     password: ${POSTGRES_PASSWORD:123456}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      idle-timeout: 300000
+      connection-timeout: 10000
+      max-lifetime: 600000
   jpa:
     hibernate:
       ddl-auto: update
@@ -17,12 +23,12 @@ spring:
     show-sql: false
   ai:
     openai:
-      api-key: ${API_KEY:}
-      base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
-      # 主诊断模型：Diagnosis Agent
+      api-key: ${OPENAI_API_KEY:}
+      base-url: https://api.zhuoruan.xyz/v1
+
       chat:
         options:
-          model: qwen3.6-plus
+          model: gpt-5.4
           temperature: 0.2
 
       # 病情整理模型：信息收集/整理 Agent
@@ -34,9 +40,11 @@ spring:
 
       # Reviewer 评审模型
       reviewers:
-        qwen:
+        gpt:
           weight: 0.4
-          model: qwen3.6-plus
+          api-key: ${OPENAI_API_KEY:}
+          base-url: https://api.zhuoruan.xyz/v1
+          model: gpt-5.4
           temperature: 0.2
 
         kimi:
@@ -70,7 +78,7 @@ spring:
       treatment:
         api-key: ${MIMO_API_KEY:}
         base-url: https://token-plan-cn.xiaomimimo.com/v1
-        model: MiMo-V2.5-Pro
+        model: mimo-v2-pro
         temperature: 0.2
 server:
   port: 8086
@@ -97,8 +105,8 @@ app:
     api-key: ${API_KEY:}
     model: text-embedding-v4
     batch-size: 10
-    connect-timeout-seconds: 30
-    read-timeout-seconds: 120
+    connect-timeout-seconds: 10
+    read-timeout-seconds: 30
   vector-import:
     source-path: D:/Medical_AI
     max-records: 0

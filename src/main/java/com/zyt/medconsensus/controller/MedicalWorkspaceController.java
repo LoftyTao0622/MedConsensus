@@ -1,22 +1,32 @@
 package com.zyt.medconsensus.controller;
 
+import com.zyt.medconsensus.dto.CaseImportResponse;
 import com.zyt.medconsensus.dto.ChatSessionDto;
 import com.zyt.medconsensus.dto.ConsultationRequest;
 import com.zyt.medconsensus.dto.ConsultationResponse;
 import com.zyt.medconsensus.dto.DiagnosticResponse;
 import com.zyt.medconsensus.dto.DoctorReviewRequest;
+import com.zyt.medconsensus.dto.DoctorStatsResponse;
 import com.zyt.medconsensus.dto.FinalDiagnosisRecordDto;
+import com.zyt.medconsensus.dto.GraphExploreRequest;
+import com.zyt.medconsensus.dto.GraphExploreResponse;
 import com.zyt.medconsensus.dto.PatientBasicInfoDto;
 import com.zyt.medconsensus.dto.PatientBasicInfoRequest;
 import com.zyt.medconsensus.dto.PipelineEvent;
 import com.zyt.medconsensus.dto.SessionDetailResponse;
+import com.zyt.medconsensus.entity.FinalDiagnosisRecord;
 import com.zyt.medconsensus.entity.PatientBasicInfo;
+import com.zyt.medconsensus.graphkg.MedicalGraphReasoningService;
+import com.zyt.medconsensus.graphkg.MedicalGraphPath;
+import com.zyt.medconsensus.mapper.FinalDiagnosisRecordMapper;
 import com.zyt.medconsensus.mapper.PatientBasicInfoMapper;
 import com.zyt.medconsensus.observability.LangSmithTracingService;
+import com.zyt.medconsensus.service.CaseImportService;
 import com.zyt.medconsensus.service.CollectorAgentService;
 import com.zyt.medconsensus.service.PatientSkillService;
 import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
+import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -29,7 +39,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
 @RestController
@@ -41,21 +53,37 @@ public class MedicalWorkspaceController {
     private final SimpMessagingTemplate messagingTemplate;
     private final CollectorAgentService collectorAgentService;
     private final PatientBasicInfoMapper patientBasicInfoMapper;
+    private final FinalDiagnosisRecordMapper finalDiagnosisRecordMapper;
     private final LangSmithTracingService tracingService;
     private final PatientSkillService patientSkillService;
+    private final CaseImportService caseImportService;
+    private final MedicalGraphReasoningService graphReasoningService;
+
+    private static final List<String> ALLOWED_IMPORT_TYPES = List.of(
+            "application/pdf",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "image/jpeg",
+            "image/png"
+    );
 
     public MedicalWorkspaceController(
             SimpMessagingTemplate messagingTemplate,
             CollectorAgentService collectorAgentService,
             PatientBasicInfoMapper patientBasicInfoMapper,
+            FinalDiagnosisRecordMapper finalDiagnosisRecordMapper,
             LangSmithTracingService tracingService,
-            PatientSkillService patientSkillService
+            PatientSkillService patientSkillService,
+            CaseImportService caseImportService,
+            MedicalGraphReasoningService graphReasoningService
     ) {
         this.messagingTemplate = messagingTemplate;
         this.collectorAgentService = collectorAgentService;
         this.patientBasicInfoMapper = patientBasicInfoMapper;
+        this.finalDiagnosisRecordMapper = finalDiagnosisRecordMapper;
         this.tracingService = tracingService;
         this.patientSkillService = patientSkillService;
+        this.caseImportService = caseImportService;
+        this.graphReasoningService = graphReasoningService;
     }
 
     @GetMapping("/patients")
@@ -174,7 +202,7 @@ public class MedicalWorkspaceController {
                     List<PipelineEvent> events = List.of(
                             new PipelineEvent("COLLECTOR", "信息收集 Agent 正在整理主诉与既往史", 18, LocalDateTime.now().toString()),
                             new PipelineEvent("DIAGNOSIS", "Diagnosis Agent 基于 LangGraph + ReAct 生成初步建议", 42, LocalDateTime.now().toString()),
-                            new PipelineEvent("REVIEWERS", "Reviewer 并行评审中：Kimi / GLM / Qwen", 68, LocalDateTime.now().toString()),
+                            new PipelineEvent("REVIEWERS", "Reviewer 并行评审中：GPT / Kimi / GLM", 68, LocalDateTime.now().toString()),
                             new PipelineEvent("DECISION", "Decision Layer 正在执行投票、置信度和风险控制", 86, LocalDateTime.now().toString()),
                             new PipelineEvent("HUMAN_REVIEW", "进入 Human-in-the-loop 医生审核", 100, LocalDateTime.now().toString())
                     );
@@ -185,6 +213,128 @@ public class MedicalWorkspaceController {
 
                     return demoResponse("经过多 Agent 评审后，系统建议优先排查社区获得性肺炎，并建议医生结合影像学检查进行最终确认。");
                 }
+        );
+    }
+
+    @PostMapping("/import-case")
+    public CaseImportResponse importCase(
+            @RequestParam("file") MultipartFile file,
+            HttpSession session
+    ) throws IOException {
+        Long doctorId = currentUserId(session);
+
+        String contentType = file.getContentType();
+        if (contentType == null || !ALLOWED_IMPORT_TYPES.contains(contentType.toLowerCase())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "不支持的文件格式，请上传 PDF、DOCX 或 JPG/PNG 图片");
+        }
+
+        if (file.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "上传文件不能为空");
+        }
+
+        return caseImportService.importCase(doctorId, file);
+    }
+
+    @GetMapping("/diagnosis-records")
+    public List<FinalDiagnosisRecordDto> diagnosisRecords(HttpSession session) {
+        Long doctorId = currentUserId(session);
+        return finalDiagnosisRecordMapper.findByUserIdOrderByCreatedAtDesc(doctorId).stream()
+                .map(this::toDiagnosisRecordDto)
+                .toList();
+    }
+
+    @DeleteMapping("/diagnosis-records/{recordId}")
+    public Map<String, Object> deleteDiagnosisRecord(@PathVariable Long recordId, HttpSession session) {
+        Long doctorId = currentUserId(session);
+        FinalDiagnosisRecord record = finalDiagnosisRecordMapper.findById(recordId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "诊断报告不存在"));
+        if (!record.getUserId().equals(doctorId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "无权删除该报告");
+        }
+        finalDiagnosisRecordMapper.deleteById(recordId);
+        return Map.of(
+                "success", true,
+                "recordId", recordId,
+                "message", "诊断报告已删除"
+        );
+    }
+
+    @GetMapping("/doctor-stats")
+    public DoctorStatsResponse doctorStats(HttpSession session) {
+        Long doctorId = currentUserId(session);
+        List<FinalDiagnosisRecord> records = finalDiagnosisRecordMapper.findByUserIdOrderByCreatedAtDesc(doctorId);
+        List<PatientBasicInfo> patients = patientBasicInfoMapper.findByDoctorIdOrderByUpdateTimeDesc(doctorId);
+        List<ChatSessionDto> sessions = collectorAgentService.loadSessions(doctorId);
+
+        int totalDiagnoses = records.size();
+        double averageConfidence = records.stream()
+                .filter(r -> r.getConfidence() != null)
+                .mapToDouble(FinalDiagnosisRecord::getConfidence)
+                .average()
+                .orElse(0.0);
+
+        long aiAdopted = records.stream()
+                .filter(r -> r.getDoctorOpinion() == null || r.getDoctorOpinion().isBlank())
+                .count();
+        double aiAdoptionRate = totalDiagnoses > 0 ? (double) aiAdopted / totalDiagnoses : 0.0;
+
+        Map<String, Integer> riskDistribution = records.stream()
+                .filter(r -> r.getRiskLevel() != null)
+                .collect(java.util.stream.Collectors.groupingBy(
+                        FinalDiagnosisRecord::getRiskLevel,
+                        java.util.stream.Collectors.summingInt(r -> 1)
+                ));
+
+        long consistent = records.stream()
+                .filter(r -> r.getAiConclusion() != null && r.getFinalConclusion() != null)
+                .filter(r -> r.getFinalConclusion().contains(r.getAiConclusion().substring(0, Math.min(20, r.getAiConclusion().length()))))
+                .count();
+        double diagnosisConsistency = totalDiagnoses > 0 ? (double) consistent / totalDiagnoses : 0.0;
+
+        return new DoctorStatsResponse(
+                totalDiagnoses,
+                Math.round(averageConfidence * 100.0) / 100.0,
+                Math.round(aiAdoptionRate * 100.0) / 100.0,
+                riskDistribution,
+                sessions.size(),
+                patients.size(),
+                Math.round(diagnosisConsistency * 100.0) / 100.0
+        );
+    }
+
+    @PostMapping("/graph-explore")
+    public GraphExploreResponse graphExplore(@Valid @RequestBody GraphExploreRequest request) {
+        List<String> symptoms = List.of(request.query().split("[,，\\s]+"));
+        List<MedicalGraphPath> paths = graphReasoningService.reasonBySymptoms(symptoms);
+
+        List<GraphExploreResponse.GraphPathDto> pathDtos = paths.stream()
+                .map(p -> new GraphExploreResponse.GraphPathDto(
+                        p.symptom(),
+                        p.disease(),
+                        p.treatments(),
+                        p.examinations(),
+                        p.confidence()
+                ))
+                .toList();
+
+        return new GraphExploreResponse(request.query(), pathDtos);
+    }
+
+    private FinalDiagnosisRecordDto toDiagnosisRecordDto(FinalDiagnosisRecord record) {
+        return new FinalDiagnosisRecordDto(
+                record.getId(),
+                record.getSessionId(),
+                record.getChiefComplaint(),
+                record.getAiConclusion(),
+                record.getDoctorOpinion(),
+                record.getFinalConclusion(),
+                record.getRiskLevel(),
+                record.getConfidence(),
+                record.getReviewStatus(),
+                null,
+                record.getTreatmentSource(),
+                record.getTreatmentAdvice(),
+                record.getUpdatedAt() == null ? null : record.getUpdatedAt().toString()
         );
     }
 
@@ -204,9 +354,9 @@ public class MedicalWorkspaceController {
                         "结合既往哮喘病史，谨慎评估是否存在气道高反应。"
                 ),
                 List.of(
-                        new DiagnosticResponse.ReviewerScore("Qwen3.6-Plus", 0.84, 0.4),
-                        new DiagnosticResponse.ReviewerScore("Kimi K2.6", 0.79, 0.3),
-                        new DiagnosticResponse.ReviewerScore("GLM", 0.81, 0.3)
+                        new DiagnosticResponse.ReviewerScore("GPT 5.4", 0.84, 0.4, "症状表现典型，同意初步结论"),
+                        new DiagnosticResponse.ReviewerScore("Kimi K2.6", 0.79, 0.3, "基本同意，需留意是否有非典型病原体感染"),
+                        new DiagnosticResponse.ReviewerScore("GLM", 0.81, 0.3, "同意结论，建议完善辅助检查以排除其他肺部疾病")
                 )
         );
     }

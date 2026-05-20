@@ -14,7 +14,8 @@ public record DiagnosticResponse(
     public record ReviewerScore(
             String name,
             double score,
-            double weight
+            double weight,
+            String comment
     ) implements Serializable {
     }
 }

@@ -19,6 +19,22 @@ async function request(path, options = {}) {
   return payload;
 }
 
+async function uploadRequest(path, formData) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    credentials: "include",
+    method: "POST",
+    body: formData
+  });
+
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(payload.message || `Upload failed: ${response.status}`);
+  }
+
+  return payload;
+}
+
 export function fetchPatients() {
   return request("/patients");
 }
@@ -84,4 +100,18 @@ export function submitConsultation(message, sessionId, patient) {
       chiefComplaint: patient?.chiefComplaint || ""
     })
   });
+}
+
+export function importCase(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  return uploadRequest("/import-case", formData);
+}
+
+export function fetchDiagnosisRecords() {
+  return request("/diagnosis-records");
+}
+
+export function deleteDiagnosisRecord(recordId) {
+  return request(`/diagnosis-records/${recordId}`, { method: "DELETE" });
 }

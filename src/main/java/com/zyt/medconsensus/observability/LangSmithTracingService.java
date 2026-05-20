@@ -77,7 +77,7 @@ public class LangSmithTracingService {
     public String traceModelCall(
             String modelName,
             String systemPrompt,
-            List<Map<String, String>> messages,
+            List<Map<String, Object>> messages,
             Supplier<String> action
     ) {
         Span span = tracer.spanBuilder("llm." + modelName)
@@ -166,14 +166,14 @@ public class LangSmithTracingService {
         return value == null ? 0 : value.length();
     }
 
-    private String joinMessages(List<Map<String, String>> messages) {
+    private String joinMessages(List<Map<String, Object>> messages) {
         return messages.stream()
                 .map(item -> item.getOrDefault("role", "unknown") + ": " + item.getOrDefault("MedContent", ""))
                 .reduce((left, right) -> left + "\n" + right)
                 .orElse("");
     }
 
-    private void setInputAttributes(Span span, String systemPrompt, List<Map<String, String>> messages) {
+    private void setInputAttributes(Span span, String systemPrompt, List<Map<String, Object>> messages) {
         if (!properties.isCaptureContent()) {
             setInputValue(span, "content redacted");
             return;
@@ -186,10 +186,10 @@ public class LangSmithTracingService {
 
         int offset = StringUtils.hasText(systemPrompt) ? 1 : 0;
         for (int index = 0; index < messages.size(); index++) {
-            Map<String, String> message = messages.get(index);
+            Map<String, Object> message = messages.get(index);
             int attributeIndex = index + offset;
-            span.setAttribute("gen_ai.prompt." + attributeIndex + ".role", message.getOrDefault("role", "user"));
-            span.setAttribute("gen_ai.prompt." + attributeIndex + ".content", message.getOrDefault("MedContent", ""));
+            span.setAttribute("gen_ai.prompt." + attributeIndex + ".role", String.valueOf(message.getOrDefault("role", "user")));
+            span.setAttribute("gen_ai.prompt." + attributeIndex + ".content", String.valueOf(message.getOrDefault("MedContent", "")));
         }
     }
 

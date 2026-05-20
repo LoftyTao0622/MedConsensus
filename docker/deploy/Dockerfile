@@ -10,12 +10,13 @@ RUN mkdir -p src/main/resources/static && cd frontend && npm run build
 FROM m.daocloud.io/docker.io/library/maven:3.9-eclipse-temurin-17 AS backend-builder
 WORKDIR /workspace
 
+COPY docker/deploy/maven-settings.xml /root/.m2/settings.xml
 COPY pom.xml ./
-RUN mvn -B -DskipTests dependency:go-offline
+RUN mvn -B -s /root/.m2/settings.xml -DskipTests dependency:go-offline
 
 COPY src ./src
 COPY --from=frontend-builder /workspace/src/main/resources/static ./src/main/resources/static
-RUN mvn -B -DskipTests package
+RUN mvn -B -s /root/.m2/settings.xml -DskipTests package
 
 FROM m.daocloud.io/docker.io/library/eclipse-temurin:17-jre
 WORKDIR /app

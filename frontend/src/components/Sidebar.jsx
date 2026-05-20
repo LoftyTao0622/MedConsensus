@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, FilePenLine, Eye, Pill, Plus, Trash2, X } from "lucide-react";
+import { Check, FilePenLine, Eye, Pill, Plus, Trash2, X, Printer } from "lucide-react";
 
 const blankPatientDraft = {
   id: null,
@@ -28,7 +28,8 @@ export function Sidebar({
   onSelectSession,
   onDeleteSession,
   consultationSubmitting,
-  canSubmitConsultation
+  canSubmitConsultation,
+  onGeneratePrescription
 }) {
   const [editingPatient, setEditingPatient] = useState(false);
   const [patientDraft, setPatientDraft] = useState(blankPatientDraft);
@@ -325,6 +326,15 @@ export function Sidebar({
         ) : (
           <p className="treatment-empty">医生给出最终诊断后，这里会显示 Treatment Agent 生成的开药建议。</p>
         )}
+        <button
+          className="primary-button full"
+          type="button"
+          onClick={onGeneratePrescription}
+          style={{ marginTop: "14px" }}
+        >
+          <Printer size={16} />
+          生成药单
+        </button>
       </section>
     </aside>
   );

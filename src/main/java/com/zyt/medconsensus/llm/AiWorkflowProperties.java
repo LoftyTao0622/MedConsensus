@@ -144,16 +144,16 @@ public class AiWorkflowProperties {
     }
 
     public static class Reviewers {
-        private Reviewer qwen = new Reviewer();
+        private Reviewer gpt = new Reviewer();
         private Reviewer kimi = new Reviewer();
         private Reviewer glm = new Reviewer();
 
-        public Reviewer getQwen() {
-            return qwen;
+        public Reviewer getGpt() {
+            return gpt;
         }
 
-        public void setQwen(Reviewer qwen) {
-            this.qwen = qwen;
+        public void setGpt(Reviewer gpt) {
+            this.gpt = gpt;
         }
 
         public Reviewer getKimi() {

@@ -39,6 +39,10 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DataAccessException;
 import org.bsc.langgraph4j.CompiledGraph;
 import org.bsc.langgraph4j.StateGraph;
@@ -51,6 +55,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -92,6 +97,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
     private final LangSmithTracingService tracingService;
     private final MedicalGraphReasoningService graphReasoningService;
     private final PatientSkillService patientSkillService;
+    private final ExecutorService reviewerExecutor;
     private final CompiledGraph<DiagnosisGraphState> workflow;
 
     public CollectorAgentServiceImpl(
@@ -109,7 +115,8 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
             FinalDiagnosisRecordMapper finalDiagnosisRecordMapper,
             LangSmithTracingService tracingService,
             MedicalGraphReasoningService graphReasoningService,
-            PatientSkillService patientSkillService
+            PatientSkillService patientSkillService,
+            @Qualifier("reviewerExecutor") ExecutorService reviewerExecutor
     ) {
         this.properties = properties;
         this.modelGateway = modelGateway;
@@ -126,6 +133,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         this.tracingService = tracingService;
         this.graphReasoningService = graphReasoningService;
         this.patientSkillService = patientSkillService;
+        this.reviewerExecutor = reviewerExecutor;
         this.workflow = compileWorkflow();
         // One normal pass already visits multiple nodes; allow room for a retry_collect round-trip.
         this.workflow.setMaxIterations(16);
@@ -326,6 +334,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         return toFinalRecordDto(saved);
     }
 
+    @Transactional
     @Override
     public void deleteSession(Long userId, String sessionId) {
         if (userId == null) {
@@ -573,11 +582,11 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
 
     private Map<String, Object> reviewNode(DiagnosisGraphState state) {
         return tracingService.traceNode(NODE_REVIEW, state, () -> {
-            emit("REVIEWERS", "Reviewer 并行评审中：Kimi / GLM / Qwen 主模型正在独立复核", 68);
+            emit("REVIEWERS", "Reviewer 并行评审中：GPT / Kimi / GLM 正在独立复核", 68);
 
-            CompletableFuture<Map<String, Object>> qwen = reviewerTask(
-                    "Qwen3.6-Plus",
-                    properties.getReviewers().getQwen(),
+            CompletableFuture<Map<String, Object>> gpt = reviewerTask(
+                    "GPT 5.4",
+                    properties.getReviewers().getGpt(),
                     state
             );
             CompletableFuture<Map<String, Object>> kimi = reviewerTask(
@@ -591,9 +600,18 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
                     state
             );
 
-            List<Map<String, Object>> reviewers = CompletableFuture.allOf(qwen, kimi, glm)
-                    .thenApply(unused -> List.of(qwen.join(), kimi.join(), glm.join()))
-                    .join();
+            List<Map<String, Object>> reviewers;
+            try {
+                reviewers = CompletableFuture.allOf(gpt, kimi, glm)
+                        .thenApply(unused -> List.of(gpt.join(), kimi.join(), glm.join()))
+                        .get(90, TimeUnit.SECONDS);
+            } catch (TimeoutException e) {
+                System.err.println("[Reviewer] 并行评审超时(90s)，降级为单模型结果");
+                reviewers = List.of();
+            } catch (Exception e) {
+                System.err.println("[Reviewer] 并行评审异常: " + e.getMessage());
+                reviewers = List.of();
+            }
 
             return Map.of("reviewers", reviewers);
         });
@@ -679,7 +697,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
                     state.value("preliminaryConclusion", ""),
                     state.value("preliminaryConfidence", 0.5d)
             );
-        });
+        }, reviewerExecutor);
     }
 
     private String normalizeDecisionRoute(String modelDecision, String fallbackRoute, int retryCount) {
@@ -837,7 +855,8 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         return new DiagnosticResponse.ReviewerScore(
                 String.valueOf(reviewer.getOrDefault("name", "Reviewer")),
                 numberValue(reviewer.get("score")),
-                numberValue(reviewer.get("weight"))
+                numberValue(reviewer.get("weight")),
+                String.valueOf(reviewer.getOrDefault("comment", "同意主模型初步结论"))
         );
     }
 

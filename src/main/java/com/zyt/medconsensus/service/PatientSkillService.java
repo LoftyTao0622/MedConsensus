@@ -13,6 +13,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.locks.ReentrantLock;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -24,6 +25,7 @@ public class PatientSkillService {
     private static final int MAX_SKILL_CHARS = 12000;
 
     private final Path skillDirectory;
+    private final ReentrantLock lock = new ReentrantLock();
 
     public PatientSkillService(@Value("${app.patient-skill.directory:partiality}") String skillDirectory) {
         this.skillDirectory = Path.of(skillDirectory).toAbsolutePath().normalize();
@@ -70,7 +72,7 @@ public class PatientSkillService {
         return String.join("\n\n", context);
     }
 
-    public synchronized void recordConsultation(
+    public void recordConsultation(
             Long userId,
             String sessionId,
             ConsultationRequest request,
@@ -82,6 +84,7 @@ public class PatientSkillService {
             return;
         }
 
+        lock.lock();
         try {
             Files.createDirectories(skillDirectory);
             Path path = skillPath(request.getPatientName());
@@ -92,6 +95,8 @@ public class PatientSkillService {
                     StandardCharsets.UTF_8, java.nio.file.StandardOpenOption.APPEND);
         } catch (IOException exception) {
             throw new IllegalStateException("患者个人 skill 写入失败", exception);
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -99,11 +104,12 @@ public class PatientSkillService {
         return skillDirectory.resolve(toEnglishFileName(patientName) + ".md").normalize();
     }
 
-    public synchronized void recordPatientProfile(PatientBasicInfo patient, boolean created) {
+    public void recordPatientProfile(PatientBasicInfo patient, boolean created) {
         if (patient == null || !StringUtils.hasText(patient.getPatientName())) {
             return;
         }
 
+        lock.lock();
         try {
             Files.createDirectories(skillDirectory);
             Path path = skillPath(patient.getPatientName());
@@ -114,6 +120,8 @@ public class PatientSkillService {
                     java.nio.file.StandardOpenOption.APPEND);
         } catch (IOException exception) {
             throw new IllegalStateException("患者个人 skill 写入失败", exception);
+        } finally {
+            lock.unlock();
         }
     }
 
