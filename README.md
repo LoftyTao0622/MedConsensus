@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/java-17-orange?style=flat-square&logo=openjdk&logoColor=white" alt="java">
   <img src="https://img.shields.io/badge/spring--boot-3.3.0-green?style=flat-square&logo=springboot&logoColor=white" alt="spring-boot">
   <img src="https://img.shields.io/badge/react-18-61DAFB?style=flat-square&logo=react&logoColor=white" alt="react">
-  <img src="https://img.shields.io/badge/license-未声明-yellow?style=flat-square" alt="license">
+  <img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="license">
   <img src="https://img.shields.io/badge/docker-compose-blue?style=flat-square&logo=docker&logoColor=white" alt="docker">
 </p>
 
@@ -398,4 +398,8 @@ docker compose logs -f neo4j
 
 ## License
 
-当前仓库尚未声明开源许可证。如需公开分发或允许他人复用代码，请补充 `LICENSE` 文件。
+本项目采用 [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0) 开源许可证。
+
+你可以在遵守许可证条款的前提下自由使用、复制、修改、分发和商用本项目代码。请在分发源码或二进制产物时保留原始版权声明、许可证文本和必要的声明文件。
+
+> 本项目为医疗辅助诊断系统示例，开源许可证仅覆盖代码授权，不构成医疗建议、临床诊断依据或合规承诺。实际部署和使用时，请遵守所在地医疗、数据安全和隐私保护相关法律法规。
