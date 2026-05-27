@@ -1,4 +1,19 @@
-# MedConsensus
+<h1 align="center">MedConsensus</h1>
+
+<p align="center">
+  <strong>基于多 Agent 共识机制的医疗辅助诊断系统</strong>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/version-0.0.1-blue?style=flat-square" alt="version">
+  <img src="https://img.shields.io/badge/java-17-orange?style=flat-square&logo=openjdk&logoColor=white" alt="java">
+  <img src="https://img.shields.io/badge/spring--boot-3.3.0-green?style=flat-square&logo=springboot&logoColor=white" alt="spring-boot">
+  <img src="https://img.shields.io/badge/react-18-61DAFB?style=flat-square&logo=react&logoColor=white" alt="react">
+  <img src="https://img.shields.io/badge/license-未声明-yellow?style=flat-square" alt="license">
+  <img src="https://img.shields.io/badge/docker-compose-blue?style=flat-square&logo=docker&logoColor=white" alt="docker">
+</p>
+
+---
 
 > 面向医生工作台的医疗多 Agent 辅助诊断系统，支持患者资料管理、问诊信息整理、CT/检查资料确认后进入诊断、Neo4j 图谱增强、多模型评审、医生复核和治疗建议生成。
 
@@ -247,10 +262,10 @@ WebSocket/STOMP 用于推送诊断流程动态，前端订阅 `/topic/pipeline`�
 
 ## 安全与隐私
 
-我不会把本地私有环境配置、密钥文件或生产凭据写进 README，也不会在文档中复述这些文件内容。仓库中的 `application.yml` 用于说明配置结构，真实凭据请继续放在部署环境或本机私有配置中。
+项目默认配置只保留运行所需的配置结构。生产环境中的模型 Key、数据库密码、图数据库密码和追踪服务凭据应通过环境变量或私有配置注入，不建议写入仓库。
 
-患者主诉、检查资料、诊断结论和医生意见都属于敏感医疗信息。演示和开发时请使用脱敏数据；启用追踪、日志或第三方模型服务前，请先确认数据合规边界。
+系统会处理患者主诉、检查资料、诊断结论和医生复核意见。演示、测试和截图时请优先使用脱敏数据；如启用 LangSmith、OpenTelemetry 或第三方模型服务，需要先确认医疗数据出境、留存和审计要求。
 
 ## License
 
-我还没有在仓库中看到许可证文件；在补充 `LICENSE` 之前，这个项目默认只按仓库当前权限使用。
+当前仓库未提供独立的 `LICENSE` 文件。对外分发或开源前，请先补充明确的许可证文本。
