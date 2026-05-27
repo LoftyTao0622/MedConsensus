@@ -44,17 +44,53 @@ MedConsensus 是一个 Spring Boot + React 全栈项目。后端负责编排 Lan
 | 部署 | Dockerfile, Docker Compose, Nginx 配置 |
 | 可观测性 | OpenTelemetry, LangSmith REST/OTLP 配置开关 |
 
-## 架构与数据流
+## 系统架构
 
 ```mermaid
-flowchart LR
-  Doctor["医生工作台 React"] --> API["Spring Boot API"]
-  API --> Auth["医生/患者/诊断记录 JPA"]
-  API --> Redis["Redis 会话与诊断快照"]
-  API --> Workflow["LangGraph4j 诊断工作流"]
-  Workflow --> Agents["Collector / Diagnosis / Reviewer / Decision / Treatment"]
-  Workflow --> Neo4j["Neo4j 图谱推理"]
-  API --> Static["内置前端静态资源"]
+flowchart TD
+    subgraph Frontend["前端 · React + Vite"]
+        UI["医生工作台"]
+        Evidence["检查资料确认页"]
+    end
+
+    subgraph Backend["后端 · Spring Boot"]
+        API["REST API"]
+        WS["STOMP WebSocket"]
+        WF["LangGraph4j 工作流引擎"]
+    end
+
+    subgraph Agents["多 Agent 层"]
+        C["Collector Agent<br/>信息收集与病情整理"]
+        D["Diagnosis Agent<br/>AI 初诊"]
+        R["Reviewer Agents<br/>GPT / Kimi / GLM"]
+        DL["Decision Layer<br/>投票 · 置信度 · 风险控制"]
+        T["Treatment Agent<br/>治疗建议生成"]
+    end
+
+    H["医生人工审核"]
+
+    subgraph Storage["数据层"]
+        NEO[("Neo4j<br/>知识图谱")]
+        PG[("PostgreSQL<br/>+ pgvector")]
+        REDIS[("Redis<br/>会话 · 缓存")]
+    end
+
+    UI -->|HTTP| API
+    UI -->|WebSocket| WS
+    Evidence -->|确认 CT / 检查资料| API
+    API --> WF
+    API --> PG
+    API --> REDIS
+    WS --> REDIS
+    WF --> NEO
+    WF --> C
+    C --> D
+    D --> R
+    R --> DL
+    DL -->|需要复核| H
+    DL -->|可输出| T
+    H --> T
+    T --> PG
 ```
 
 核心诊断工作流位于 `CollectorAgentServiceImpl`：
