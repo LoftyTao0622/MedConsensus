@@ -963,6 +963,107 @@ textarea {
   background: rgba(255, 255, 255, 0.78);
 }
 
+.medical-evidence-upload {
+  display: grid;
+  gap: 10px;
+}
+
+.evidence-upload-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  width: 100%;
+  border: 1px dashed rgba(29, 113, 184, 0.42);
+  border-radius: 16px;
+  color: var(--primary-dark);
+  background: rgba(217, 236, 251, 0.48);
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+}
+
+.evidence-upload-button:hover:not(:disabled) {
+  border-color: var(--primary);
+  background: rgba(217, 236, 251, 0.75);
+  transform: translateY(-1px);
+}
+
+.evidence-upload-button:disabled {
+  opacity: 0.62;
+  cursor: not-allowed;
+}
+
+.medical-evidence-file {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.medical-evidence-file span {
+  min-width: 0;
+  overflow: hidden;
+  color: #23425e;
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.medical-evidence-preview {
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  border: 1px solid rgba(29, 113, 184, 0.2);
+  border-radius: 16px;
+  background: rgba(248, 251, 254, 0.92);
+  cursor: pointer;
+}
+
+.medical-evidence-preview span {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.medical-evidence-preview strong {
+  display: block;
+  color: #10324d;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.medical-evidence-preview p {
+  margin: 6px 0 0;
+  color: #48647f;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.medical-evidence-disclaimer {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.session-evidence-file {
+  display: block;
+  margin-top: 4px;
+  color: var(--primary-dark);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .session-item {
   display: flex;
   align-items: start;
@@ -1808,6 +1909,192 @@ textarea {
   width: 100%;
 }
 
+.evidence-review-page {
+  max-width: 1180px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.evidence-page-title {
+  align-items: center;
+}
+
+.evidence-compliance-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 18px 0 20px;
+  padding: 14px 16px;
+  border: 1px solid rgba(194, 111, 28, 0.24);
+  border-radius: 16px;
+  color: #7a4a12;
+  background: rgba(255, 247, 237, 0.86);
+}
+
+.evidence-compliance-banner p {
+  margin: 0;
+  line-height: 1.7;
+}
+
+.evidence-state-panel {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(248, 251, 254, 0.88);
+}
+
+.evidence-state-panel h3 {
+  margin: 0 0 8px;
+  color: #10324d;
+}
+
+.evidence-state-panel p {
+  margin: 0;
+  color: #48647f;
+  line-height: 1.7;
+}
+
+.evidence-state-panel small {
+  display: block;
+  margin-top: 8px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.evidence-state-panel.error {
+  border-color: rgba(224, 77, 82, 0.26);
+  background: rgba(255, 241, 242, 0.82);
+  color: var(--danger);
+}
+
+.evidence-status-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.evidence-status-item {
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.evidence-status-item span {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.evidence-status-item strong {
+  display: block;
+  overflow: hidden;
+  color: #10324d;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evidence-red-flags {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid rgba(224, 77, 82, 0.26);
+  border-radius: 16px;
+  color: #b4232a;
+  background: rgba(255, 241, 242, 0.86);
+}
+
+.evidence-red-flags strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.evidence-red-flags p {
+  margin: 0;
+  color: #7f1d1d;
+  line-height: 1.7;
+}
+
+.evidence-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.evidence-section {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.evidence-section h3 {
+  margin: 0 0 10px;
+  color: #10324d;
+  font-size: 15px;
+}
+
+.evidence-section p,
+.evidence-section li {
+  color: #48647f;
+  line-height: 1.75;
+}
+
+.evidence-section p {
+  margin: 0;
+}
+
+.evidence-section ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.evidence-empty-line {
+  color: var(--text-muted);
+}
+
+.evidence-review-note {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.evidence-review-note span {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.evidence-review-note textarea {
+  min-height: 104px;
+  width: 100%;
+  resize: vertical;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  outline: none;
+  color: #10324d;
+  background: rgba(255, 255, 255, 0.78);
+  line-height: 1.7;
+}
+
+.evidence-review-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 16px;
+}
+
 .full-height {
   min-height: calc(100vh - 48px);
 }
@@ -2336,6 +2623,20 @@ textarea {
   }
   .patient-management-grid {
     grid-template-columns: 1fr;
+  }
+
+  .evidence-status-grid,
+  .evidence-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .evidence-review-actions {
+    flex-direction: column;
+  }
+
+  .evidence-review-actions .primary-button,
+  .evidence-review-actions .secondary-button {
+    width: 100%;
   }
 }
 

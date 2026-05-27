@@ -30,6 +30,14 @@ public class ConsultationRequest {
     @Size(max = 1000)
     private String chiefComplaint;
 
+    @Size(max = 12000)
+    private String medicalEvidence;
+
+    @Size(max = 255)
+    private String medicalEvidenceFileName;
+
+    private boolean medicalEvidenceConfirmed;
+
     public String getSessionId() {
         return sessionId;
     }
@@ -92,5 +100,29 @@ public class ConsultationRequest {
 
     public void setChiefComplaint(String chiefComplaint) {
         this.chiefComplaint = chiefComplaint;
+    }
+
+    public String getMedicalEvidence() {
+        return medicalEvidence;
+    }
+
+    public void setMedicalEvidence(String medicalEvidence) {
+        this.medicalEvidence = medicalEvidence;
+    }
+
+    public String getMedicalEvidenceFileName() {
+        return medicalEvidenceFileName;
+    }
+
+    public void setMedicalEvidenceFileName(String medicalEvidenceFileName) {
+        this.medicalEvidenceFileName = medicalEvidenceFileName;
+    }
+
+    public boolean isMedicalEvidenceConfirmed() {
+        return medicalEvidenceConfirmed;
+    }
+
+    public void setMedicalEvidenceConfirmed(boolean medicalEvidenceConfirmed) {
+        this.medicalEvidenceConfirmed = medicalEvidenceConfirmed;
     }
 }

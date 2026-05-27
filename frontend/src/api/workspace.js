@@ -97,7 +97,10 @@ export function submitConsultation(message, sessionId, patient) {
       patientGender: patient?.gender || "",
       patientAge: patient?.age ? String(patient.age) : "",
       patientWeight: patient?.weight ? String(patient.weight) : "",
-      chiefComplaint: patient?.chiefComplaint || ""
+      chiefComplaint: patient?.chiefComplaint || "",
+      medicalEvidence: patient?.medicalEvidence || "",
+      medicalEvidenceFileName: patient?.medicalEvidenceFileName || "",
+      medicalEvidenceConfirmed: Boolean(patient?.medicalEvidenceConfirmed)
     })
   });
 }
@@ -106,6 +109,12 @@ export function importCase(file) {
   const formData = new FormData();
   formData.append("file", file);
   return uploadRequest("/import-case", formData);
+}
+
+export function analyzeMedicalEvidence(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  return uploadRequest("/medical-evidence/analyze", formData);
 }
 
 export function fetchDiagnosisRecords() {

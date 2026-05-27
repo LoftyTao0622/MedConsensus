@@ -13,6 +13,7 @@ import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.annotation.Profile;
+import org.springframework.util.StringUtils;
 
 @Profile("graph-import")
 @SpringBootApplication(scanBasePackages = {
@@ -72,7 +73,17 @@ public class MedicalKnowledgeGraphImportApplication implements ApplicationRunner
     }
 
     private List<MedicalGraphChunk> loadChunks(long lastId) throws Exception {
-        String sql = """
+        String sourceFilter = normalizeSourceFile(importProperties.getSourceFile());
+        boolean filterBySource = StringUtils.hasText(sourceFilter);
+        String sql = filterBySource
+                ? """
+                SELECT id, source_file, source_index, chunk_text
+                FROM %s
+                WHERE id > ? AND source_file = ?
+                ORDER BY id
+                LIMIT ?
+                """.formatted(vectorProperties.safeTable())
+                : """
                 SELECT id, source_file, source_index, chunk_text
                 FROM %s
                 WHERE id > ?
@@ -86,7 +97,12 @@ public class MedicalKnowledgeGraphImportApplication implements ApplicationRunner
         );
              PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setLong(1, lastId);
-            statement.setInt(2, importProperties.effectiveBatchSize());
+            if (filterBySource) {
+                statement.setString(2, sourceFilter);
+                statement.setInt(3, importProperties.effectiveBatchSize());
+            } else {
+                statement.setInt(2, importProperties.effectiveBatchSize());
+            }
             List<MedicalGraphChunk> chunks = new ArrayList<>();
             try (ResultSet rs = statement.executeQuery()) {
                 while (rs.next()) {
@@ -100,6 +116,10 @@ public class MedicalKnowledgeGraphImportApplication implements ApplicationRunner
             }
             return chunks;
         }
+    }
+
+    private String normalizeSourceFile(String sourceFile) {
+        return sourceFile == null ? "" : sourceFile.replace('\\', '/');
     }
 
     private boolean reachLimit(long imported) {

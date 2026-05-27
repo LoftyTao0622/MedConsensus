@@ -151,11 +151,19 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         if (!StringUtils.hasText(userMessage)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "请输入咨询内容");
         }
+        if (StringUtils.hasText(request.getMedicalEvidence()) && !request.isMedicalEvidenceConfirmed()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "检查资料尚未由医生确认，不能进入诊断 Agent");
+        }
+        String workflowMessage = appendMedicalEvidence(
+                userMessage.trim(),
+                request.getMedicalEvidence(),
+                request.getMedicalEvidenceFileName()
+        );
 
         String sessionId = request.getSessionId();
         String resolvedSessionId = StringUtils.hasText(sessionId) ? sessionId : newSessionId();
         List<MessageSnapshot> history = loadMessageSnapshots(userId, resolvedSessionId);
-        history.add(new MessageSnapshot("user", userMessage.trim()));
+        history.add(new MessageSnapshot("user", workflowMessage));
         saveMessageSnapshots(userId, resolvedSessionId, history);
 
         String patientSkill = patientSkillService.buildCurrentContext(request, patientSkillService.loadSkill(request));
@@ -163,7 +171,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         Map<String, Object> initialState = new LinkedHashMap<>();
         initialState.put("userId", userId);
         initialState.put("sessionId", resolvedSessionId);
-        initialState.put("userMessage", userMessage.trim());
+        initialState.put("userMessage", workflowMessage);
         initialState.put("memory", history.stream().map(MessageSnapshot::content).toList());
         initialState.put("patientName", request.getPatientName());
         initialState.put("patientSkill", patientSkill);
@@ -173,7 +181,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
                 "MedConsenus Diagnosis Workflow",
                 userId,
                 resolvedSessionId,
-                userMessage,
+                workflowMessage,
                 () -> workflow.invoke(initialState)
                         .orElseThrow(() -> new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "工作流执行失败"))
         );
@@ -181,9 +189,12 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         SessionSnapshot sessionSnapshot = upsertSession(
                 userId,
                 resolvedSessionId,
-                sessionTitle(request.getPatientName(), result.value("title", summarizeTitle(userMessage))),
+                sessionTitle(request.getPatientName(), result.value("title", summarizeTitle(workflowMessage))),
                 result.value("sessionStatus", "病情整理中"),
-                LocalDateTime.now().format(TIME_FORMATTER)
+                LocalDateTime.now().format(TIME_FORMATTER),
+                StringUtils.hasText(request.getMedicalEvidenceFileName())
+                        ? request.getMedicalEvidenceFileName()
+                        : currentEvidenceFileName(userId, resolvedSessionId)
         );
 
         String assistantMessage = result.value("finalConclusion", "已完成病情整理。");
@@ -214,16 +225,31 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
 
         return new ConsultationResponse(
                 resolvedSessionId,
-                result.value("chiefComplaint", userMessage.trim()),
+                result.value("chiefComplaint", workflowMessage),
                 new ChatSessionDto(
                         sessionSnapshot.id(),
                         sessionSnapshot.title(),
                         sessionSnapshot.status(),
-                        sessionSnapshot.updatedAt()
+                        sessionSnapshot.updatedAt(),
+                        sessionSnapshot.evidenceFileName()
                 ),
                 diagnosis,
                 history.stream().map(MessageSnapshot::content).toList()
         );
+    }
+
+    private String appendMedicalEvidence(String userMessage, String medicalEvidence, String evidenceFileName) {
+        if (!StringUtils.hasText(medicalEvidence)) {
+            return userMessage;
+        }
+        String evidence = medicalEvidence.trim();
+        String fileLine = StringUtils.hasText(evidenceFileName)
+                ? "文件名：" + evidenceFileName.trim() + "\n"
+                : "";
+        return userMessage
+                + "\n\n【GPT-5.4视觉模型结构化检查资料】\n"
+                + fileLine
+                + evidence;
     }
 
     @Override
@@ -233,7 +259,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         }
 
         return loadSessionSnapshots(userId).stream()
-                .map(item -> new ChatSessionDto(item.id(), item.title(), item.status(), item.updatedAt()))
+                .map(item -> new ChatSessionDto(item.id(), item.title(), item.status(), item.updatedAt(), item.evidenceFileName()))
                 .toList();
     }
 
@@ -329,7 +355,8 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
                 request.getSessionId(),
                 currentSessionTitle(userId, request.getSessionId(), "已完成诊断"),
                 "已形成最终结论",
-                LocalDateTime.now().format(TIME_FORMATTER)
+                LocalDateTime.now().format(TIME_FORMATTER),
+                currentEvidenceFileName(userId, request.getSessionId())
         );
         return toFinalRecordDto(saved);
     }
@@ -529,11 +556,14 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
     }
 
     private List<String> graphQueryTerms(DiagnosisGraphState state) {
+        List<String> rawTerms = new ArrayList<>();
+        addIfText(rawTerms, state.value("chiefComplaint", ""));
+        addIfText(rawTerms, state.value("collectorSummary", ""));
+        stringListValue(state, "structuredAnalysis").forEach(item -> addIfText(rawTerms, item));
+
         List<String> terms = new ArrayList<>();
-        addIfText(terms, state.value("chiefComplaint", ""));
-        addIfText(terms, state.value("collectorSummary", ""));
-        stringListValue(state, "structuredAnalysis").forEach(item -> addIfText(terms, item));
-        addKnownGraphTerms(terms, String.join(" ", terms) + " " + state.value("patientSkill", ""));
+        addKnownGraphTerms(terms, String.join(" ", rawTerms) + " " + state.value("patientSkill", ""));
+        terms.addAll(rawTerms);
         return terms.stream()
                 .map(String::trim)
                 .filter(StringUtils::hasText)
@@ -543,11 +573,18 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
     }
 
     private void addKnownGraphTerms(List<String> terms, String text) {
-        Map<String, List<String>> aliases = Map.of(
-                "肥胖", List.of("肥胖", "肥胖症", "超重", "体重增加", "体重明显增加", "身上肉很多"),
-                "食量大", List.of("食量大", "饭量大", "能吃", "吃得多", "吃起来不节制"),
-                "不爱运动", List.of("不爱运动", "缺乏运动", "不喜欢运动", "懒", "叫他运动也不愿意"),
-                "吃完饭就躺", List.of("吃完饭就躺", "吃完就躺", "床上吃零食")
+        Map<String, List<String>> aliases = Map.ofEntries(
+                Map.entry("肥胖", List.of("肥胖", "肥胖症", "超重", "体重增加", "体重明显增加", "身上肉很多")),
+                Map.entry("食量大", List.of("食量大", "饭量大", "能吃", "吃得多", "吃起来不节制")),
+                Map.entry("不爱运动", List.of("不爱运动", "缺乏运动", "不喜欢运动", "懒", "叫他运动也不愿意")),
+                Map.entry("吃完饭就躺", List.of("吃完饭就躺", "吃完就躺", "床上吃零食")),
+                Map.entry("膝骨关节炎", List.of("膝骨关节炎", "膝关节骨关节炎", "退行性膝关节炎", "慢性关节炎", "骨性关节炎")),
+                Map.entry("关节炎", List.of("关节炎", "慢性关节炎", "关节反复疼痛")),
+                Map.entry("膝关节疼痛", List.of("膝关节疼痛", "双膝关节反复疼痛", "膝盖疼", "膝痛", "上下楼困难")),
+                Map.entry("关节僵硬", List.of("僵硬感", "晨僵", "屈伸不利", "关节屈伸不利")),
+                Map.entry("风寒湿痹", List.of("遇冷", "阴雨天", "冬天疼痛", "膝盖发凉", "发凉", "寒湿", "风寒湿痹", "寒湿痹阻", "苔白腻")),
+                Map.entry("肝肾不足", List.of("腰膝酸软", "腿软无力", "脉沉细", "长期劳累后症状容易加重")),
+                Map.entry("气血不足", List.of("面色偏白", "气短乏力", "容易疲劳", "舌淡"))
         );
         aliases.forEach((term, words) -> {
             if (words.stream().anyMatch(text::contains)) {
@@ -907,13 +944,29 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
                 .orElse(fallback);
     }
 
+    private String currentEvidenceFileName(Long userId, String sessionId) {
+        if (!StringUtils.hasText(sessionId)) {
+            return "";
+        }
+        return loadSessionSnapshots(userId).stream()
+                .filter(session -> session.id().equals(sessionId))
+                .map(SessionSnapshot::evidenceFileName)
+                .filter(StringUtils::hasText)
+                .findFirst()
+                .orElse("");
+    }
+
     private String newSessionId() {
         return "chat-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
     }
 
     private SessionSnapshot upsertSession(Long userId, String sessionId, String title, String status, String updatedAt) {
+        return upsertSession(userId, sessionId, title, status, updatedAt, currentEvidenceFileName(userId, sessionId));
+    }
+
+    private SessionSnapshot upsertSession(Long userId, String sessionId, String title, String status, String updatedAt, String evidenceFileName) {
         List<SessionSnapshot> sessions = new ArrayList<>(loadSessionSnapshots(userId));
-        SessionSnapshot snapshot = new SessionSnapshot(sessionId, title, status, updatedAt);
+        SessionSnapshot snapshot = new SessionSnapshot(sessionId, title, status, updatedAt, evidenceFileName);
         sessions.removeIf(session -> session.id().equals(sessionId));
         sessions.add(0, snapshot);
         writeJson(sessionKey(userId), sessions);
@@ -1052,7 +1105,8 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
             String id,
             String title,
             String status,
-            String updatedAt
+            String updatedAt,
+            String evidenceFileName
     ) {
     }
 

@@ -4,6 +4,7 @@ public record ChatSessionDto(
         String id,
         String title,
         String status,
-        String updatedAt
+        String updatedAt,
+        String evidenceFileName
 ) {
 }

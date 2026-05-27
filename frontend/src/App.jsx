@@ -7,6 +7,7 @@ import { DiagnosticPanel } from "./components/DiagnosticPanel";
 import { DoctorPanel } from "./components/DoctorPanel";
 import { AuthPanel } from "./components/AuthPanel";
 import { DoctorProfileTab } from "./components/DoctorProfileTab";
+import { EvidenceReviewPanel } from "./components/EvidenceReviewPanel";
 import { fetchCurrentUser, logoutUser } from "./api/auth";
 import {
   createPatient,
@@ -22,6 +23,7 @@ import {
   simulatePipeline,
   submitDoctorReview,
   importCase,
+  analyzeMedicalEvidence,
   fetchDiagnosisRecords
 } from "./api/workspace";
 import { connectPipelineSocket } from "./api/websocket";
@@ -37,6 +39,7 @@ const initialEvents = [
 
 const REMINDER_STORAGE_KEY = "medconsensus-doctor-reminders";
 const CARE_MODE_STORAGE_KEY = "medconsensus-care-mode";
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
 function readStoredReminders() {
   try {
@@ -152,6 +155,15 @@ function listHtml(items) {
 
 function safeFileName(value) {
   return String(value || "未命名患者").replace(/[\\/:*?"<>|]/g, "_").slice(0, 40);
+}
+
+function formatFileSize(bytes) {
+  if (!Number.isFinite(bytes)) {
+    return "未知大小";
+  }
+  return bytes >= 1024 * 1024
+    ? `${(bytes / 1024 / 1024).toFixed(1)} MB`
+    : `${(bytes / 1024).toFixed(1)} KB`;
 }
 
 function buildDiagnosisReportHtml({ patient, diagnosis, opinion, finalRecord, doctorName }) {
@@ -377,7 +389,19 @@ export default function App() {
   const [importResult, setImportResult] = useState(null);
   const [diagnosisRecords, setDiagnosisRecords] = useState([]);
   const [dragOver, setDragOver] = useState(false);
-  const canSubmitConsultation = Boolean(patient?.id && patient?.name?.trim() && consultationInput.trim());
+  const [medicalEvidence, setMedicalEvidence] = useState(null);
+  const [medicalEvidenceFile, setMedicalEvidenceFile] = useState(null);
+  const [medicalEvidenceAnalyzing, setMedicalEvidenceAnalyzing] = useState(false);
+  const [medicalEvidenceConfirmed, setMedicalEvidenceConfirmed] = useState(false);
+  const [medicalEvidenceError, setMedicalEvidenceError] = useState("");
+  const [medicalEvidenceReviewNote, setMedicalEvidenceReviewNote] = useState("");
+  const hasUploadedMedicalEvidence = Boolean(medicalEvidenceFile || medicalEvidence);
+  const hasConfirmedMedicalEvidence = Boolean(medicalEvidence?.evidenceText && medicalEvidenceConfirmed);
+  const canSubmitConsultation = Boolean(
+    patient?.id
+      && patient?.name?.trim()
+      && (consultationInput.trim() || hasUploadedMedicalEvidence || hasConfirmedMedicalEvidence)
+  );
 
   useEffect(() => {
     document.documentElement.classList.toggle("care-mode", careMode);
@@ -582,18 +606,68 @@ export default function App() {
     }
   }
 
-  async function handleSubmitConsultation() {
+  function handleAppendPatientEvidence(evidence) {
+    const normalized = evidence.trim();
+    if (!normalized) {
+      return;
+    }
+    setConsultationInput((current) => {
+      const prefix = current.trim() ? `${current.trim()}\n\n` : "";
+      return `${prefix}补充诊断依据：${normalized}`;
+    });
+    setActiveTab("workspace");
+    setFeedback("补充依据已填入患者诉求，请确认后提交。");
+  }
+
+  async function handleSubmitConsultation({
+    evidenceConfirmed = medicalEvidenceConfirmed,
+    allowMedicalEvidenceSubmission = false
+  } = {}) {
+    if (hasUploadedMedicalEvidence && !allowMedicalEvidenceSubmission) {
+      setFeedback(
+        medicalEvidenceAnalyzing
+          ? "检查资料仍在识别中，请等待识别完成并由医生确认或清除后再进入诊断 Agent。"
+          : "本轮已上传检查资料，请先对 CT/检查资料作出确认或清除决定，再进入诊断 Agent。"
+      );
+      setActiveTab("evidence");
+      return;
+    }
+
+    if (medicalEvidenceAnalyzing) {
+      setFeedback("检查资料仍在识别中，请等待识别完成并由医生确认后再进入诊断 Agent。");
+      setActiveTab("evidence");
+      return;
+    }
+
+    if (medicalEvidenceFile && !evidenceConfirmed) {
+      setFeedback("已上传检查资料但尚未确认，请先到检查资料页面确认或清除后再进入诊断 Agent。");
+      setActiveTab("evidence");
+      return;
+    }
+
     setConsultationSubmitting(true);
     setFeedback("");
 
     try {
+      const consultationNote = consultationInput.trim() || "请结合上传的检查资料进行诊断建议。";
+      const confirmedEvidence = buildConfirmedEvidenceText(evidenceConfirmed);
       const response = await submitConsultation(
-        buildConsultationMessage(patient, consultationInput),
+        buildConsultationMessage(patient, consultationNote),
         activeSessionId,
-        patient
+        {
+          ...patient,
+          medicalEvidence: confirmedEvidence,
+          medicalEvidenceFileName: evidenceConfirmed ? (medicalEvidence?.fileName || medicalEvidenceFile?.name || "") : "",
+          medicalEvidenceConfirmed: evidenceConfirmed
+        }
       );
       setActiveSessionId(response.sessionId);
       setConsultationInput("");
+      setMedicalEvidence(null);
+      setMedicalEvidenceFile(null);
+      setMedicalEvidenceConfirmed(false);
+      setMedicalEvidenceError("");
+      setMedicalEvidenceReviewNote("");
       setDiagnosis(response.diagnosis);
       setSessions((current) => {
         const next = current.filter((item) => item.id !== response.session.id);
@@ -736,8 +810,87 @@ export default function App() {
       setFeedback("不支持的文件格式，请上传 PDF、DOCX 或 JPG/PNG 图片。");
       return;
     }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setFeedback(`文件过大：${formatFileSize(file.size)}。请上传 50MB 以内的文件，或先压缩图片/PDF。`);
+      return;
+    }
     setImportFile(file);
     setImportResult(null);
+  }
+
+  async function handleAnalyzeMedicalEvidence(file) {
+    if (!file) return;
+    const allowed = [
+      "application/pdf",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "image/jpeg",
+      "image/png",
+      "image/jpg"
+    ];
+    if (!allowed.includes(file.type)) {
+      setFeedback("不支持的文件格式，请上传 PDF、DOCX 或 JPG/PNG 图片。");
+      return;
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setMedicalEvidenceError(`文件过大：${formatFileSize(file.size)}。请上传 50MB 以内的文件，或先压缩图片/PDF。`);
+      setActiveTab("evidence");
+      setFeedback(`检查资料过大：${formatFileSize(file.size)}，请上传 50MB 以内的文件。`);
+      return;
+    }
+
+    setMedicalEvidenceFile(file);
+    setMedicalEvidence(null);
+    setMedicalEvidenceConfirmed(false);
+    setMedicalEvidenceError("");
+    setMedicalEvidenceReviewNote("");
+    setMedicalEvidenceAnalyzing(true);
+    setFeedback("");
+
+    try {
+      const result = await analyzeMedicalEvidence(file);
+      setMedicalEvidence(result);
+      setActiveTab("evidence");
+      setFeedback("检查资料已识别，请医生确认后再提交给诊断 Agent。");
+    } catch (error) {
+      setMedicalEvidenceFile(null);
+      setMedicalEvidenceError(error.message);
+      setActiveTab("evidence");
+      setFeedback(`检查资料识别失败: ${error.message}`);
+    } finally {
+      setMedicalEvidenceAnalyzing(false);
+    }
+  }
+
+  function handleClearMedicalEvidence() {
+    setMedicalEvidence(null);
+    setMedicalEvidenceFile(null);
+    setMedicalEvidenceConfirmed(false);
+    setMedicalEvidenceError("");
+    setMedicalEvidenceReviewNote("");
+  }
+
+  async function handleConfirmMedicalEvidence() {
+    if (!medicalEvidence) return;
+    setMedicalEvidenceConfirmed(true);
+    if (patient?.id && (consultationInput.trim() || medicalEvidence.evidenceText)) {
+      await handleSubmitConsultation({
+        evidenceConfirmed: true,
+        allowMedicalEvidenceSubmission: true
+      });
+      return;
+    }
+    setFeedback("检查资料已由医生确认，请补充患者文字信息后提交给诊断 Agent。");
+    setActiveTab("workspace");
+  }
+
+  function buildConfirmedEvidenceText(evidenceConfirmed = medicalEvidenceConfirmed) {
+    if (!evidenceConfirmed || !medicalEvidence?.evidenceText) {
+      return "";
+    }
+    const note = medicalEvidenceReviewNote.trim();
+    return note
+      ? `${medicalEvidence.evidenceText}\n医生确认备注：${note}`
+      : medicalEvidence.evidenceText;
   }
 
   async function handleImportCase() {
@@ -833,12 +986,20 @@ export default function App() {
               consultationSubmitting={consultationSubmitting}
               canSubmitConsultation={canSubmitConsultation}
               onGeneratePrescription={handleGeneratePrescription}
+              medicalEvidence={medicalEvidence}
+              medicalEvidenceFile={medicalEvidenceFile}
+              medicalEvidenceAnalyzing={medicalEvidenceAnalyzing}
+              medicalEvidenceConfirmed={medicalEvidenceConfirmed}
+              onAnalyzeMedicalEvidence={handleAnalyzeMedicalEvidence}
+              onClearMedicalEvidence={handleClearMedicalEvidence}
+              onOpenEvidencePanel={() => setActiveTab("evidence")}
             />
             <DiagnosticPanel
               diagnosis={diagnosis}
               pipelineEvents={pipelineEvents}
               sessionDetail={sessionDetail}
               onSimulate={handleSimulate}
+              onAppendPatientEvidence={handleAppendPatientEvidence}
               busy={busy}
             />
             <DoctorPanel
@@ -855,6 +1016,21 @@ export default function App() {
               reportDisabled={!activeSessionId || !diagnosis}
             />
           </div>
+        )}
+
+        {activeTab === "evidence" && (
+          <EvidenceReviewPanel
+            evidence={medicalEvidence}
+            evidenceFile={medicalEvidenceFile}
+            evidenceConfirmed={medicalEvidenceConfirmed}
+            evidenceError={medicalEvidenceError}
+            evidenceReviewNote={medicalEvidenceReviewNote}
+            submitting={consultationSubmitting}
+            onEvidenceReviewNoteChange={setMedicalEvidenceReviewNote}
+            onConfirmEvidence={handleConfirmMedicalEvidence}
+            onClearEvidence={handleClearMedicalEvidence}
+            onBackToWorkspace={() => setActiveTab("workspace")}
+          />
         )}
         
         {activeTab === "review" && (

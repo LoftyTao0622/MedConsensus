@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zyt.medconsensus.dto.CaseImportResponse;
 import com.zyt.medconsensus.dto.FinalDiagnosisRecordDto;
+import com.zyt.medconsensus.dto.MedicalEvidenceAnalysisResponse;
 import com.zyt.medconsensus.dto.PatientBasicInfoDto;
 import com.zyt.medconsensus.entity.FinalDiagnosisRecord;
 import com.zyt.medconsensus.entity.PatientBasicInfo;
@@ -14,8 +15,6 @@ import com.zyt.medconsensus.mapper.PatientBasicInfoMapper;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
-import java.time.OffsetDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -29,7 +28,7 @@ import org.springframework.web.multipart.MultipartFile;
 public class CaseImportService {
 
     private static final String SYSTEM_PROMPT = """
-            你是一个医疗文档解析助手。请从以下医疗文档/图片中提取患者信息和诊断报告，返回严格的 JSON 格式。
+            你是一个医疗检查资料结构化识别助手。请从以下医疗文档内容中提取患者信息、检查发现和诊断线索，返回严格的 JSON 格式。
             JSON 结构必须包含以下字段：
             {
               "patientName": "患者姓名",
@@ -38,18 +37,28 @@ public class CaseImportService {
               "weight": 体重（数字，单位kg，无法判断则为0）,
               "phone": "联系电话（无法判断则为空字符串）",
               "chiefComplaint": "主诉/主要症状描述",
-              "diagnosis": "诊断结论",
+              "modality": "资料类型，如CT/化验单/处方/病历/PDF报告/未知",
+              "examType": "检查项目",
+              "bodyPart": "检查部位",
+              "imagingFindings": ["影像学所见，没有则为空数组"],
+              "labFindings": ["实验室/检验结果，没有则为空数组"],
+              "keyMeasurements": ["关键数值或测量结果，没有则为空数组"],
+              "diagnosis": "资料中明确写出的诊断或模型辅助提炼的疑似诊断线索",
+              "impression": "检查印象/结论",
               "riskLevel": "风险等级（低风险/中风险/中高风险/高风险）",
+              "redFlags": ["需要医生优先复核的危险信号，没有则为空数组"],
               "confidence": 置信度（0.0到1.0之间的数字）,
               "treatmentAdvice": "治疗建议",
-              "summary": "文档内容摘要（100字以内）"
+              "summary": "资料内容摘要（100字以内）",
+              "doctorReviewRequired": true
             }
+            不要把影像识别结果作为最终诊断；无法判断的字段使用空字符串或空数组。
             仅返回合法 JSON，不要输出 Markdown 标记或其他文字。
             """;
 
-    private static final String IMAGE_PROMPT = """
-            你是一个医疗影像/图片解析助手。请仔细分析这张医疗相关的图片（可能是检查报告、处方单、化验单、病历照片等），
-            从中提取患者信息和诊断报告，返回严格的 JSON 格式。
+    private static final String VISION_PROMPT = """
+            你是一个医疗图像和检查报告结构化识别助手。请仔细分析上传资料，可能是 CT 截图、医学影像截图、
+            检查报告、处方单、化验单、病历照片或扫描 PDF 页面。返回严格的 JSON 格式。
             JSON 结构必须包含以下字段：
             {
               "patientName": "患者姓名",
@@ -58,12 +67,22 @@ public class CaseImportService {
               "weight": 体重（数字，单位kg，无法判断则为0）,
               "phone": "联系电话（无法判断则为空字符串）",
               "chiefComplaint": "主诉/主要症状描述",
-              "diagnosis": "诊断结论",
+              "modality": "资料类型，如CT/化验单/处方/病历/PDF报告/未知",
+              "examType": "检查项目",
+              "bodyPart": "检查部位",
+              "imagingFindings": ["影像学所见，没有则为空数组"],
+              "labFindings": ["实验室/检验结果，没有则为空数组"],
+              "keyMeasurements": ["关键数值或测量结果，没有则为空数组"],
+              "diagnosis": "资料中明确写出的诊断或模型辅助提炼的疑似诊断线索",
+              "impression": "检查印象/结论",
               "riskLevel": "风险等级（低风险/中风险/中高风险/高风险）",
+              "redFlags": ["需要医生优先复核的危险信号，没有则为空数组"],
               "confidence": 置信度（0.0到1.0之间的数字）,
               "treatmentAdvice": "治疗建议",
-              "summary": "图片内容摘要（100字以内）"
+              "summary": "资料内容摘要（100字以内）",
+              "doctorReviewRequired": true
             }
+            不要把影像识别结果作为最终诊断；无法判断的字段使用空字符串或空数组。
             仅返回合法 JSON，不要输出 Markdown 标记或其他文字。
             """;
 
@@ -95,6 +114,34 @@ public class CaseImportService {
 
     @Transactional
     public CaseImportResponse importCase(Long doctorId, MultipartFile file) throws IOException {
+        JsonNode result = analyzeFile(file);
+
+        PatientBasicInfo patient = createPatient(doctorId, result);
+        FinalDiagnosisRecord record = createDiagnosisRecord(doctorId, result);
+
+        patientSkillService.recordPatientProfile(patient, true);
+
+        PatientBasicInfoDto patientDto = toPatientDto(patient);
+        FinalDiagnosisRecordDto recordDto = toDiagnosisRecordDto(record);
+        String summary = result.has("summary") ? result.get("summary").asText("") : "";
+
+        return new CaseImportResponse(patientDto, recordDto, summary, "病例导入成功");
+    }
+
+    public MedicalEvidenceAnalysisResponse analyzeMedicalEvidence(MultipartFile file) throws IOException {
+        JsonNode result = analyzeFile(file);
+        String summary = result.has("summary") ? result.get("summary").asText("") : "";
+        return new MedicalEvidenceAnalysisResponse(
+                file.getOriginalFilename(),
+                result,
+                formatEvidenceForAgent(result),
+                summary,
+                "PENDING_REVIEW",
+                "检查资料识别成功，请医生确认后再提交给诊断 Agent"
+        );
+    }
+
+    private JsonNode analyzeFile(MultipartFile file) throws IOException {
         String contentType = file.getContentType();
         String llmResponse;
 
@@ -109,47 +156,36 @@ public class CaseImportService {
         }
 
         if (!StringUtils.hasText(llmResponse)) {
-            throw new RuntimeException("AI 模型未能解析文档内容，请检查文件是否清晰可读");
+            throw new RuntimeException("GPT-5.4视觉模型未能解析检查资料，请确认模型配置、文件清晰度和文件格式后重试");
         }
 
-        JsonNode result = parseLlmResponse(llmResponse);
-
-        PatientBasicInfo patient = createPatient(doctorId, result);
-        FinalDiagnosisRecord record = createDiagnosisRecord(doctorId, result);
-
-        patientSkillService.recordPatientProfile(patient, true);
-
-        PatientBasicInfoDto patientDto = toPatientDto(patient);
-        FinalDiagnosisRecordDto recordDto = toDiagnosisRecordDto(record);
-        String summary = result.has("summary") ? result.get("summary").asText("") : "";
-
-        return new CaseImportResponse(patientDto, recordDto, summary, "病例导入成功");
+        return parseLlmResponse(llmResponse);
     }
 
     private String processImage(MultipartFile file) throws IOException {
         try (InputStream is = file.getInputStream()) {
             String base64 = documentParsingService.encodeFileToBase64(is);
-            String mimeType = file.getContentType();
+            String mimeType = StringUtils.hasText(file.getContentType()) ? file.getContentType() : "image/jpeg";
             String dataUrl = "data:" + mimeType + ";base64," + base64;
-
-            List<Map<String, Object>> contentParts = new ArrayList<>();
-            contentParts.add(Map.of("type", "text", "text", IMAGE_PROMPT));
-
-            Map<String, Object> imageUrl = new java.util.HashMap<>();
-            imageUrl.put("type", "image_url");
-            imageUrl.put("image_url", Map.of("url", dataUrl));
-            contentParts.add(imageUrl);
-
-            MultiModelGateway.ModelSpec spec = collectorSpec();
-            return modelGateway.chatVision(spec, "", contentParts);
+            return callVisionWithImages("", List.of(dataUrl));
         }
     }
 
     private String processPdf(MultipartFile file) throws IOException {
+        String text;
         try (InputStream is = file.getInputStream()) {
-            String text = documentParsingService.extractTextFromPdf(is);
-            return callLlmWithText(text);
+            text = documentParsingService.extractTextFromPdf(is);
         }
+
+        List<String> pageImages;
+        try (InputStream is = file.getInputStream()) {
+            pageImages = documentParsingService.renderPdfPagesToPngDataUrls(is, 4);
+        }
+
+        if (!pageImages.isEmpty()) {
+            return callVisionWithImages(text, pageImages);
+        }
+        return callLlmWithText(text);
     }
 
     private String processDocx(MultipartFile file) throws IOException {
@@ -161,11 +197,28 @@ public class CaseImportService {
 
     private String callLlmWithText(String text) {
         String truncated = text.length() > 12000 ? text.substring(0, 12000) : text;
-        MultiModelGateway.ModelSpec spec = collectorSpec();
-        return modelGateway.chat(spec, SYSTEM_PROMPT, List.of(Map.of(
+        return modelGateway.chat(visionSpec(), SYSTEM_PROMPT, List.of(Map.of(
                 "role", "user",
                 "content", "以下是医疗文档内容：\n\n" + truncated
         )));
+    }
+
+    private String callVisionWithImages(String text, List<String> imageDataUrls) {
+        List<Map<String, Object>> contentParts = new ArrayList<>();
+        contentParts.add(Map.of("type", "text", "text", VISION_PROMPT));
+        if (StringUtils.hasText(text)) {
+            String truncated = text.length() > 6000 ? text.substring(0, 6000) : text;
+            contentParts.add(Map.of("type", "text", "text", "PDF可提取文本：\n" + truncated));
+        }
+
+        for (String imageDataUrl : imageDataUrls) {
+            Map<String, Object> imageUrl = new java.util.HashMap<>();
+            imageUrl.put("type", "image_url");
+            imageUrl.put("image_url", Map.of("url", imageDataUrl));
+            contentParts.add(imageUrl);
+        }
+
+        return modelGateway.chatVision(visionSpec(), "", contentParts);
     }
 
     private JsonNode parseLlmResponse(String response) {
@@ -182,6 +235,28 @@ public class CaseImportService {
         } catch (Exception e) {
             throw new RuntimeException("AI 返回内容解析失败: " + e.getMessage());
         }
+    }
+
+    private MultiModelGateway.ModelSpec visionSpec() {
+        AiWorkflowProperties.Vision vision = properties.getVision();
+        return new MultiModelGateway.ModelSpec(
+                StringUtils.hasText(vision.getApiKey()) ? vision.getApiKey() : properties.getApiKey(),
+                StringUtils.hasText(vision.getBaseUrl()) ? vision.getBaseUrl() : properties.getBaseUrl(),
+                vision.getModel(),
+                vision.getTemperature()
+        );
+    }
+
+    private boolean isImageType(String contentType) {
+        return contentType != null && (contentType.startsWith("image/"));
+    }
+
+    private boolean isPdfType(String contentType) {
+        return "application/pdf".equals(contentType);
+    }
+
+    private boolean isDocxType(String contentType) {
+        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document".equals(contentType);
     }
 
     private PatientBasicInfo createPatient(Long doctorId, JsonNode result) {
@@ -201,8 +276,9 @@ public class CaseImportService {
         record.setUserId(doctorId);
         record.setSessionId("import-" + UUID.randomUUID().toString().substring(0, 8));
         record.setChiefComplaint(getTextOrDefault(result, "chiefComplaint", ""));
-        record.setAiConclusion(getTextOrDefault(result, "diagnosis", ""));
-        record.setFinalConclusion(getTextOrDefault(result, "diagnosis", ""));
+        String diagnosis = diagnosisText(result);
+        record.setAiConclusion(diagnosis);
+        record.setFinalConclusion(diagnosis);
         record.setRiskLevel(getTextOrDefault(result, "riskLevel", "中风险"));
         record.setConfidence(getDoubleOrDefault(result, "confidence", 0.7));
         record.setReviewStatus("IMPORTED");
@@ -210,25 +286,23 @@ public class CaseImportService {
         return finalDiagnosisRecordMapper.save(record);
     }
 
-    private MultiModelGateway.ModelSpec collectorSpec() {
-        return new MultiModelGateway.ModelSpec(
-                StringUtils.hasText(properties.getCollector().getApiKey()) ? properties.getCollector().getApiKey() : properties.getApiKey(),
-                StringUtils.hasText(properties.getCollector().getBaseUrl()) ? properties.getCollector().getBaseUrl() : properties.getBaseUrl(),
-                properties.getCollector().getModel(),
-                properties.getCollector().getTemperature()
-        );
+    private String diagnosisText(JsonNode result) {
+        String diagnosis = getTextOrDefault(result, "diagnosis", "");
+        if (StringUtils.hasText(diagnosis)) {
+            return diagnosis;
+        }
+        return getTextOrDefault(result, "impression", "");
     }
 
-    private boolean isImageType(String contentType) {
-        return contentType != null && (contentType.startsWith("image/"));
-    }
-
-    private boolean isPdfType(String contentType) {
-        return "application/pdf".equals(contentType);
-    }
-
-    private boolean isDocxType(String contentType) {
-        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document".equals(contentType);
+    private String formatEvidenceForAgent(JsonNode result) {
+        try {
+            String json = objectMapper.writeValueAsString(result);
+            String evidence = "医学检查资料结构化识别 JSON：" + json;
+            return evidence.length() > 6000 ? evidence.substring(0, 6000) : evidence;
+        } catch (Exception exception) {
+            String summary = result.has("summary") ? result.get("summary").asText("") : result.toString();
+            return "医学检查资料结构化识别摘要：" + summary;
+        }
     }
 
     private String getTextOrDefault(JsonNode node, String field, String defaultValue) {

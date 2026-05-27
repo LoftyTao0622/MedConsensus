@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Check, FilePenLine, Eye, Pill, Plus, Trash2, X, Printer } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Check, FilePenLine, Eye, Pill, Plus, Trash2, X, Printer, Upload, Loader2 } from "lucide-react";
 
 const blankPatientDraft = {
   id: null,
@@ -29,10 +29,18 @@ export function Sidebar({
   onDeleteSession,
   consultationSubmitting,
   canSubmitConsultation,
-  onGeneratePrescription
+  onGeneratePrescription,
+  medicalEvidence,
+  medicalEvidenceFile,
+  medicalEvidenceAnalyzing,
+  medicalEvidenceConfirmed,
+  onAnalyzeMedicalEvidence,
+  onClearMedicalEvidence,
+  onOpenEvidencePanel
 }) {
   const [editingPatient, setEditingPatient] = useState(false);
   const [patientDraft, setPatientDraft] = useState(blankPatientDraft);
+  const evidenceInputRef = useRef(null);
 
   useEffect(() => {
     if (!editingPatient) {
@@ -72,6 +80,7 @@ export function Sidebar({
   const treatmentLines = finalRecord?.treatmentAdvice
     ? finalRecord.treatmentAdvice.split("\n").filter(Boolean)
     : [];
+  const evidence = medicalEvidence?.extracted || {};
 
   return (
     <aside className="sidebar">
@@ -258,6 +267,55 @@ export function Sidebar({
           >
             {consultationSubmitting ? "整理中..." : activeSessionId ? "继续提交患者诉求" : "提交患者具体诉求"}
           </button>
+
+          <div className="medical-evidence-upload">
+            <input
+              ref={evidenceInputRef}
+              type="file"
+              accept=".pdf,.docx,.jpg,.jpeg,.png"
+              style={{ display: "none" }}
+              onChange={(event) => {
+                onAnalyzeMedicalEvidence(event.target.files[0]);
+                event.target.value = "";
+              }}
+            />
+            <button
+              className="evidence-upload-button"
+              type="button"
+              disabled={!patient?.id || medicalEvidenceAnalyzing}
+              onClick={() => evidenceInputRef.current?.click()}
+            >
+              {medicalEvidenceAnalyzing ? <Loader2 size={16} className="spin" /> : <Upload size={16} />}
+              {medicalEvidenceAnalyzing ? "GPT-5.4识别中" : "上传CT/检查报告"}
+            </button>
+
+            {medicalEvidenceFile ? (
+              <div className="medical-evidence-file">
+                <span>{medicalEvidenceFile.name}</span>
+                <button
+                  className="ghost-icon"
+                  type="button"
+                  aria-label="移除检查资料"
+                  disabled={medicalEvidenceAnalyzing}
+                  onClick={onClearMedicalEvidence}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            ) : null}
+
+            {medicalEvidence ? (
+              <button className="medical-evidence-preview" type="button" onClick={onOpenEvidencePanel}>
+                <span>{medicalEvidenceConfirmed ? "已确认资料" : "待确认资料"}</span>
+                <strong>{evidence.modality || evidence.examType || "检查资料"}</strong>
+                <p>{medicalEvidence.summary || evidence.impression || evidence.diagnosis || "已完成结构化识别"}</p>
+              </button>
+            ) : null}
+
+            <p className="medical-evidence-disclaimer">
+              AI 识别仅作辅助，确认后才会进入诊断 Agent，最终诊断以医生判断为准。
+            </p>
+          </div>
         </div>
 
         <div className="session-list">
@@ -269,6 +327,7 @@ export function Sidebar({
               <div>
                 <h3>{session.title}</h3>
                 <p>{session.status}</p>
+                {session.evidenceFileName ? <span className="session-evidence-file">资料：{session.evidenceFileName}</span> : null}
                 <span>{session.updatedAt}</span>
               </div>
 

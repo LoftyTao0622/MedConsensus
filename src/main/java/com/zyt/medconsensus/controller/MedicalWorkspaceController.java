@@ -10,6 +10,7 @@ import com.zyt.medconsensus.dto.DoctorStatsResponse;
 import com.zyt.medconsensus.dto.FinalDiagnosisRecordDto;
 import com.zyt.medconsensus.dto.GraphExploreRequest;
 import com.zyt.medconsensus.dto.GraphExploreResponse;
+import com.zyt.medconsensus.dto.MedicalEvidenceAnalysisResponse;
 import com.zyt.medconsensus.dto.PatientBasicInfoDto;
 import com.zyt.medconsensus.dto.PatientBasicInfoRequest;
 import com.zyt.medconsensus.dto.PipelineEvent;
@@ -63,6 +64,7 @@ public class MedicalWorkspaceController {
             "application/pdf",
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             "image/jpeg",
+            "image/jpg",
             "image/png"
     );
 
@@ -223,16 +225,18 @@ public class MedicalWorkspaceController {
     ) throws IOException {
         Long doctorId = currentUserId(session);
 
-        String contentType = file.getContentType();
-        if (contentType == null || !ALLOWED_IMPORT_TYPES.contains(contentType.toLowerCase())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "不支持的文件格式，请上传 PDF、DOCX 或 JPG/PNG 图片");
-        }
-
-        if (file.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "上传文件不能为空");
-        }
-
+        validateImportFile(file);
         return caseImportService.importCase(doctorId, file);
+    }
+
+    @PostMapping("/medical-evidence/analyze")
+    public MedicalEvidenceAnalysisResponse analyzeMedicalEvidence(
+            @RequestParam("file") MultipartFile file,
+            HttpSession session
+    ) throws IOException {
+        currentUserId(session);
+        validateImportFile(file);
+        return caseImportService.analyzeMedicalEvidence(file);
     }
 
     @GetMapping("/diagnosis-records")
@@ -367,6 +371,17 @@ public class MedicalWorkspaceController {
             return value;
         }
         throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "当前未登录");
+    }
+
+    private void validateImportFile(MultipartFile file) {
+        String contentType = file.getContentType();
+        if (contentType == null || !ALLOWED_IMPORT_TYPES.contains(contentType.toLowerCase())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "不支持的文件格式，请上传 PDF、DOCX 或 JPG/PNG 图片");
+        }
+
+        if (file.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "上传文件不能为空");
+        }
     }
 
     private void applyPatientRequest(PatientBasicInfo patient, PatientBasicInfoRequest request) {

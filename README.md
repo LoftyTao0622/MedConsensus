@@ -1,405 +1,220 @@
-<h1 align="center">MedConsensus</h1>
+# MedConsensus
 
-<p align="center">
-  <strong>基于多 Agent 共识机制的医疗辅助诊断系统</strong>
-</p>
+> 面向医生工作台的医疗多 Agent 辅助诊断系统，支持患者资料管理、问诊信息整理、CT/检查资料确认后进入诊断、Neo4j 图谱增强、多模型评审、医生复核和治疗建议生成。
 
-<p align="center">
-  <img src="https://img.shields.io/badge/version-0.0.1-blue?style=flat-square" alt="version">
-  <img src="https://img.shields.io/badge/java-17-orange?style=flat-square&logo=openjdk&logoColor=white" alt="java">
-  <img src="https://img.shields.io/badge/spring--boot-3.3.0-green?style=flat-square&logo=springboot&logoColor=white" alt="spring-boot">
-  <img src="https://img.shields.io/badge/react-18-61DAFB?style=flat-square&logo=react&logoColor=white" alt="react">
-  <img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="license">
-  <img src="https://img.shields.io/badge/docker-compose-blue?style=flat-square&logo=docker&logoColor=white" alt="docker">
-</p>
+MedConsensus 是一个 Spring Boot + React 全栈项目。后端负责编排 LangGraph4j 多 Agent 工作流、会话存储、患者资料、医生账号、知识图谱查询和最终诊断记录；前端提供医生工作台、患者列表、诊断进度、检查资料确认、医生复核和报告生成界面。
 
----
+> 免责声明：本项目是医疗辅助决策系统示例，不替代执业医生诊断、临床判断、影像报告或处方审核。AI 输出必须由具备资质的医生结合真实病历和检查资料复核。
 
-## 项目简介
+## 当前核心流程
 
-MedConsensus 是一个面向医疗问诊辅助场景的**多 Agent 共识诊断系统**。系统通过信息收集 Agent、诊断 Agent、多模型 Reviewer、决策层和医生人工复核流程，将患者主诉整理、AI 初诊、模型交叉评审、风险控制和最终诊断记录串联成一个完整的医生工作台。
+1. 医生登录或注册后进入工作台。
+2. 在患者列表中新增或选择患者，填写患者本次诉求。
+3. 如果没有上传 CT/检查报告，医生可直接提交诉求进入诊断 Agent。
+4. 如果上传了 CT、影像截图、PDF、DOCX 或检查报告图片，系统先调用视觉/文档解析模型做结构化识别。
+5. 只要本轮上传过检查资料，文字提交按钮不会直接进入诊断；医生必须在“检查资料识别确认”页确认或清除资料。
+6. 医生点击“确认并用于诊断 Agent”后，系统把患者文字诉求、结构化检查资料和医生确认备注合并后进入诊断工作流。
+7. “患者诊断依据补充”区域的内容可点击“填入患者诉求”，追加到左侧患者诉求输入框，由医生确认后再提交。
+8. 工作流完成 Collector、Diagnosis、Reviewer、Decision 等节点后展示 AI 初步诊断、依据、建议和流程动态。
+9. 医生提交人工复核意见后，系统保存最终诊断记录，并可生成 Treatment Agent 治疗/开药说明。
 
-> **免责声明**：本系统定位为医生辅助决策工具，不替代执业医生诊断、临床判断或处方审核。最终诊断和用药建议必须由具备资质的医生确认。
+## 功能概览
 
----
-
-## 核心特性
-
-- **多 Agent 协作** — Collector、Diagnosis、Reviewer、Decision、Treatment 五大角色协同工作
-- **多模型交叉评审** — GPT、Kimi、GLM 等多模型并行评审，加权投票形成共识
-- **Human-in-the-loop** — 医生复核机制，最终结论以医生确认结果为准
-- **知识图谱增强** — Neo4j 医学知识图谱补充诊断证据
-- **向量检索** — pgvector 支持医疗语料语义检索与 RAG 增强
-- **实时流程推送** — WebSocket STOMP 协议，诊断进度实时可视化
-- **一键部署** — Docker Compose 编排全部依赖服务
-
----
-
-## 系统架构
-
-```mermaid
-flowchart TD
-    subgraph Frontend["前端 · React + Vite"]
-        UI["医生工作台"]
-    end
-
-    subgraph Backend["后端 · Spring Boot"]
-        API["REST API"]
-        WS["STOMP WebSocket"]
-        WF["LangGraph4j 工作流引擎"]
-    end
-
-    subgraph Agents["多 Agent 层"]
-        C["Collector Agent<br/>信息收集与病情整理"]
-        D["Diagnosis Agent<br/>AI 初诊"]
-        R["Reviewer Agents<br/>GPT / Kimi / GLM"]
-        DL["Decision Layer<br/>投票 · 置信度 · 风险控制"]
-        T["Treatment Agent<br/>治疗建议生成"]
-    end
-
-    subgraph Storage["数据层"]
-        PG[("PostgreSQL<br/>+ pgvector")]
-        REDIS[("Redis<br/>会话 · 缓存")]
-        NEO[("Neo4j<br/>知识图谱")]
-    end
-
-    UI -->|HTTP| API
-    UI -->|WebSocket| WS
-    API --> WF
-    WF --> C --> D
-    D --> R --> DL
-    DL -->|需要复核| H["医生人工审核"]
-    DL -->|可输出| T
-    H --> T
-    API --> PG
-    API --> REDIS
-    WF --> NEO
-    WF --> PG
-```
-
----
-
-## 业务流程
-
-```mermaid
-flowchart TD
-    A["医生登录"] --> B["选择 / 创建患者"]
-    B --> C["提交主诉与病情信息"]
-    C --> D["Collector Agent 整理病情"]
-    D --> E{"信息是否充分？"}
-    E -- "不充分" --> F["追问补充信息"]
-    F --> D
-    E -- "充分" --> G["Diagnosis Agent 生成初诊"]
-    G --> H["Neo4j 知识图谱补充证据"]
-    H --> I["GPT / Kimi / GLM 并行评审"]
-    I --> J["Decision Layer 投票与风险评估"]
-    J --> K{"是否需要人工复核？"}
-    K -- "需要" --> L["医生 Human-in-the-loop 审核"]
-    K -- "可输出初诊" --> M["生成 AI 初诊建议"]
-    L --> N["保存最终诊断记录"]
-    N --> O["Treatment Agent 生成治疗建议"]
-```
-
----
-
-## 项目结构
-
-```
-MedConsensus/
-├── docker/                          # 部署配置
-│   ├── deploy/
-│   │   ├── Dockerfile               # 多阶段构建（Node → Maven → JRE）
-│   │   ├── docker-compose.yml       # 全服务编排
-│   │   ├── .env.example             # 环境变量模板
-│   │   └── nginx/
-│   │       └── medconsensus.conf    # Nginx 反向代理配置
-│   └── postgres/
-│       └── init/
-│           └── 01-init.sql          # 数据库初始化脚本
-├── docs/                            # 项目文档
-│   ├── deployment.md                # 完整部署指南
-│   └── project-guide.md             # 项目说明文档
-├── frontend/                        # 前端 · React + Vite
-│   ├── src/
-│   │   ├── api/                     # API 封装（auth · workspace · websocket）
-│   │   ├── components/              # UI 组件
-│   │   │   ├── AuthPanel.jsx        # 登录注册面板
-│   │   │   ├── Sidebar.jsx          # 患者与会话侧栏
-│   │   │   ├── DiagnosticPanel.jsx  # AI 诊断结果展示
-│   │   │   ├── DoctorPanel.jsx      # 医生复核输入
-│   │   │   ├── SessionDetailPanel.jsx
-│   │   │   └── Header.jsx
-│   │   ├── App.jsx                  # 应用主入口
-│   │   └── styles.css
-│   ├── vite.config.js
-│   └── package.json
-├── src/
-│   ├── main/
-│   │   ├── java/com/zyt/medconsensus/
-│   │   │   ├── agent/               # AI Agent 实现
-│   │   │   │   ├── CollectorAgent.java
-│   │   │   │   ├── DiagnosisAgent.java
-│   │   │   │   ├── ReviewerAgent.java
-│   │   │   │   ├── TreatmentAgent.java
-│   │   │   │   └── schema/          # Agent 输出结构定义
-│   │   │   ├── config/              # 配置（CORS · Redis · Security · WebSocket）
-│   │   │   ├── controller/          # REST 接口
-│   │   │   ├── dto/                 # 数据传输对象
-│   │   │   ├── entity/              # JPA 实体
-│   │   │   ├── graph/               # LangGraph 工作流状态
-│   │   │   ├── graphkg/             # Neo4j 知识图谱操作
-│   │   │   ├── importer/            # 医疗数据向量导入
-│   │   │   ├── llm/                 # 多模型调用网关
-│   │   │   ├── mapper/              # MyBatis / JPA Mapper
-│   │   │   ├── observability/       # LangSmith / OpenTelemetry
-│   │   │   ├── rag/                 # RAG 向量检索
-│   │   │   ├── service/             # 业务逻辑
-│   │   │   └── tool/                # 工具函数（风险评估 · 投票）
-│   │   └── resources/
-│   │       └── application.yml      # 应用配置
-│   └── test/                        # 测试
-├── pom.xml                          # Maven 项目配置
-└── README.md
-```
-
----
+- 医生账号：注册、登录、会话保持和退出登录。
+- 患者管理：新增、编辑、删除患者基本信息，并写入患者个人 skill 记忆。
+- 会话管理：Redis 保存问诊会话、消息历史、诊断快照和会话列表。
+- 多 Agent 诊断：Collector 信息整理、Diagnosis 初诊、Reviewer 并行复核、Decision 决策、Human Review 和 Finalize。
+- CT/检查资料流程：上传 PDF、DOCX、JPG、PNG 后先识别，再由医生确认或清除，确认后才进入诊断 Agent。
+- 诊断依据补充：补充内容可回填到患者诉求，避免只停留在页面备注。
+- 知识图谱增强：Neo4j 执行“症状 -> 疾病 -> 治疗/检查”路径推理，并把命中结果并入诊断依据。
+- 最终记录与治疗建议：医生复核后保存最终诊断，Treatment Agent 结合数据库或模型生成治疗建议。
 
 ## 技术栈
 
-| 层级 | 技术                                  | 用途 |
-|------|-------------------------------------|------|
-| **运行时** | Java 17                             | 后端运行环境 |
-| **后端框架** | Spring Boot 3.3.0                   | Web · WebSocket · JPA · Actuator |
-| **AI 编排** | LangGraph4j 1.5.14                  | 多 Agent 工作流状态机 |
-| **AI 网关** | Spring AI OpenAI Starter            | 统一多模型调用接口 |
-| **LLM 模型** | GPT5 · DeepSeek · Kimi · GLM · MiMo | 各 Agent 角色模型 |
-| **关系数据库** | PostgreSQL 16 + pgvector            | 业务数据 + 向量存储 |
-| **缓存** | Redis 7                             | 会话列表 · 对话历史 · 诊断快照 |
-| **知识图谱** | Neo4j 5                             | 医学实体关系图谱 |
-| **前端框架** | React 18 + Vite 5                   | 医生工作台 SPA |
-| **实时通信** | STOMP WebSocket                     | 诊断流程实时推送 |
-| **可观测性** | OpenTelemetry + LangSmith           | 链路追踪与监控 |
-| **部署** | Docker Compose + Nginx              | 一键部署全套服务 |
+| 层 | 技术 |
+|----|------|
+| 后端 | Java 17, Spring Boot 3.3.0, Spring Web, WebSocket, Validation, Actuator |
+| Agent 编排 | LangGraph4j 1.5.14 |
+| LLM 接入 | Spring AI OpenAI starter, 自定义 MultiModelGateway |
+| 数据库 | PostgreSQL, Spring Data JPA |
+| 会话缓存 | Redis, Redisson |
+| 知识图谱 | Neo4j Java Driver |
+| 文档解析 | Apache PDFBox, Apache POI |
+| 前端 | React 18, Vite 5, lucide-react, STOMP WebSocket |
+| 部署 | Dockerfile, Docker Compose, Nginx 配置 |
+| 可观测性 | OpenTelemetry, LangSmith REST/OTLP 配置开关 |
 
----
+## 架构与数据流
 
-## 快速开始
-
-### 环境要求
-
-| 工具 | 版本 |
-|------|------|
-| JDK | 17+ |
-| Maven | 3.9+ |
-| Node.js | 20+ |
-| Docker | 24+ |
-| Docker Compose | v2 |
-
-### 方式一：Docker Compose 部署（推荐）
-
-```bash
-# 1. 克隆项目
-git clone https://github.com/FoeverFreeTao/MedConsenus.git
-cd MedConsensus
-
-# 2. 配置环境变量
-cp docker/deploy/.env.example docker/deploy/.env
-# 编辑 .env，设置 API_KEY 等必填项
+```mermaid
+flowchart LR
+  Doctor["医生工作台 React"] --> API["Spring Boot API"]
+  API --> Auth["医生/患者/诊断记录 JPA"]
+  API --> Redis["Redis 会话与诊断快照"]
+  API --> Workflow["LangGraph4j 诊断工作流"]
+  Workflow --> Agents["Collector / Diagnosis / Reviewer / Decision / Treatment"]
+  Workflow --> Neo4j["Neo4j 图谱推理"]
+  API --> Static["内置前端静态资源"]
 ```
 
-编辑 `docker/deploy/.env`，至少配置以下变量：
+核心诊断工作流位于 `CollectorAgentServiceImpl`：
 
-```env
-POSTGRES_PASSWORD=your_password
-NEO4J_PASSWORD=your_password
-API_KEY=your_dashscope_api_key
-MIMO_API_KEY=your_mimo_api_key        # Treatment Agent 使用
+```text
+collect -> assess -> ask_more_info
+                 \-> diagnose -> review -> decide -> retry_collect / human_review / finalize
 ```
 
-```bash
-# 3. 启动全部服务
-cd docker/deploy
-docker compose pull
-docker compose up -d
+## 项目结构
 
-# 4. 查看状态
-docker compose ps
-docker compose logs -f app
+```text
+.
+├── docker/
+│   ├── deploy/                  # Dockerfile、Compose、Nginx 部署配置
+│   └── postgres/init/           # PostgreSQL / pgvector 初始化脚本
+├── docs/                        # 部署说明与项目说明文档
+├── frontend/                    # React + Vite 前端源码
+│   ├── src/api/                 # auth、workspace、websocket API 封装
+│   ├── src/components/          # 工作台、诊断、复核、检查资料确认等组件
+│   └── vite.config.js           # 构建输出到 Spring Boot static
+├── partiality/                  # 患者个人 skill 记忆目录
+├── src/main/java/com/zyt/medconsensus/
+│   ├── agent/                   # Collector、Diagnosis、Reviewer、Treatment Agent
+│   ├── controller/              # Auth 与 Workspace REST API
+│   ├── graphkg/                 # Neo4j 知识图谱导入与推理
+│   ├── importer/                # 医疗 JSON 向量导入入口
+│   ├── llm/                     # 多模型网关与模型配置
+│   ├── rag/                     # pgvector 与 embedding 支持
+│   ├── service/                 # 业务服务与诊断流程编排
+│   └── tool/                    # 信息充足度、风险、投票等工作流工具
+├── src/main/resources/
+│   ├── application.yml          # 默认配置与环境变量绑定
+│   └── static/                  # 前端生产构建产物
+└── pom.xml
 ```
 
-访问 `http://localhost:8086` 即可使用。
+## 本地开发
 
-如需 Nginx 反向代理：
+### 前置条件
+
+- JDK 17+
+- Maven 3.9+
+- Node.js 20+
+- PostgreSQL
+- Redis
+- Neo4j
+- 可用的模型 API Key 和对应服务地址
+
+### 后端启动
 
 ```bash
-docker compose --profile proxy up -d
-# 访问 http://localhost
-```
-
-### 方式二：本地开发
-
-```bash
-# 后端
 mvn spring-boot:run
+```
 
-# 前端（新终端）
+默认服务端口为 `8086`。配置项来自 `src/main/resources/application.yml`，真实凭据请通过环境变量或本机私有配置注入。
+
+常用环境变量：
+
+| 变量 | 用途 |
+|------|------|
+| `SPRING_DATASOURCE_URL` | PostgreSQL 业务库连接 |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` | PostgreSQL 账号 |
+| `REDIS_HOST` / `REDIS_PORT` | Redis 地址 |
+| `NEO4J_URI` / `NEO4J_USER` / `NEO4J_PASSWORD` | Neo4j 连接 |
+| `API_KEY` | DashScope 兼容接口模型、embedding、图谱抽取等 |
+| `OPENAI_API_KEY` | 主诊断或视觉模型配置 |
+| `MIMO_API_KEY` | Treatment Agent 配置 |
+| `LANGSMITH_ENABLED` | 是否启用 LangSmith 追踪 |
+
+### 前端启动
+
+```bash
 cd frontend
-npm ci
+npm install
 npm run dev
 ```
 
-| 服务 | 地址 |
-|------|------|
-| 后端（含打包后的前端） | `http://127.0.0.1:8086` |
-| Vite 前端开发服务 | `http://127.0.0.1:5173` |
+Vite 开发服务器默认监听 `127.0.0.1:5173`，并把 `/api` 与 `/ws` 代理到后端 `8086`。
 
-Vite 开发代理：`/api` → `http://127.0.0.1:8086`，`/ws` → `ws://127.0.0.1:8086`
-
----
-
-## 配置说明
-
-### 环境变量
-
-| 变量 | 必填 | 说明 |
-|------|:----:|------|
-| `API_KEY` | **是** | DashScope 兼容 OpenAI API Key |
-| `POSTGRES_PASSWORD` | **是** | PostgreSQL 密码 |
-| `NEO4J_PASSWORD` | **是** | Neo4j 密码 |
-| `MIMO_API_KEY` | 否 | MiMo API Key（Treatment Agent） |
-| `LANGSMITH_ENABLED` | 否 | 开启 LangSmith 追踪（默认 `false`） |
-| `LANGSMITH_API_KEY` | 否 | LangSmith API Key |
-| `LANGSMITH_CAPTURE_CONTENT` | 否 | 是否捕获患者文本（建议保持 `false`） |
-| `JAVA_OPTS` | 否 | JVM 参数 |
-
-### 模型配置
-
-模型配置集中在 `application.yml` 的 `spring.ai.openai` 下：
-
-| 配置段              | Agent 角色              | 默认模型              |
-|------------------|-----------------------|-------------------|
-| `chat.options`   | Diagnosis Agent（主诊断）  | GPT-5.4           |
-| `collector`      | Collector Agent（信息收集） | deepseek-v4-flash |
-| `reviewers.gpt`  | GPT Reviewer（权重 0.4）  | GPT-5.4           |
-| `reviewers.kimi` | Kimi Reviewer（权重 0.3） | kimi-k2.6         |
-| `reviewers.glm`  | GLM Reviewer（权重 0.3）  | glm-5.1           |
-| `decision`       | Decision Layer（决策）    | deepseek-v4-flash |
-| `treatment`      | Treatment Agent（治疗建议） | MiMo-V2.5-Pro     |
-
----
-
-## API 接口
-
-### 认证
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `POST` | `/api/auth/register` | 医生注册 |
-| `POST` | `/api/auth/login` | 医生登录 |
-| `GET` | `/api/auth/me` | 获取当前登录医生 |
-| `POST` | `/api/auth/logout` | 退出登录 |
-
-### 工作台
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `GET` | `/api/workspace/patients` | 患者列表 |
-| `POST` | `/api/workspace/patients` | 新增患者 |
-| `PUT` | `/api/workspace/patients/{id}` | 更新患者 |
-| `DELETE` | `/api/workspace/patients/{id}` | 删除患者 |
-| `GET` | `/api/workspace/sessions` | 会话列表 |
-| `GET` | `/api/workspace/sessions/{id}` | 会话详情 |
-| `POST` | `/api/workspace/consultations` | 提交咨询，触发多 Agent 诊断 |
-| `POST` | `/api/workspace/doctor-review` | 提交医生复核意见 |
-
-### WebSocket
-
-| 项 | 值 |
-|----|-----|
-| Endpoint | `/ws/diagnosis` |
-| Topic | `/topic/pipeline` |
-| 用途 | 推送诊断流程各阶段进度 |
-
----
-
-## 数据存储
-
-| 存储 | 数据 |
-|------|------|
-| **PostgreSQL** | 医生账号 · 患者信息 · 疾病药品库 · 最终诊断记录 |
-| **pgvector** | 医疗语料向量（1024 维）· 语义检索 |
-| **Redis** | 会话列表 · 对话历史 · 诊断快照 |
-| **Neo4j** | 医学实体关系 · 症状-疾病-治疗路径 |
-
----
-
-## 部署架构
-
-```
-┌─────────────────────────────────────────────────────┐
-│                    Docker Compose                    │
-│                                                     │
-│  ┌──────────┐  ┌──────────┐  ┌───────────────────┐  │
-│  │  Nginx   │  │   App    │  │    PostgreSQL      │  │
-│  │  :80     │──│  :8086   │──│    + pgvector      │  │
-│  │ (可选)   │  │ Spring   │  │    :5432           │  │
-│  └──────────┘  │ Boot     │  └───────────────────┘  │
-│                │ + React  │                          │
-│                └────┬─────┘  ┌───────────────────┐  │
-│                     │        │      Redis         │  │
-│                     ├────────│      :6379         │  │
-│                     │        └───────────────────┘  │
-│                     │                                │
-│                     │        ┌───────────────────┐  │
-│                     └────────│      Neo4j         │  │
-│                              │    :7474/:7687     │  │
-│                              └───────────────────┘  │
-└─────────────────────────────────────────────────────┘
-         │
-         ▼
-   DashScope / MiMo API
-   (GPT · DeepSeek · Kimi · GLM)
-```
-
----
-
-## 健康检查
+### 构建前端并打包到后端
 
 ```bash
-# 应用健康检查
-curl http://127.0.0.1:8086/actuator/health
-
-# 查看各服务状态
-docker compose ps
-
-# 查看日志
-docker compose logs -f app
-docker compose logs -f postgres
-docker compose logs -f neo4j
+cd frontend
+npm run build
 ```
 
----
+前端生产产物会输出到 `src/main/resources/static`，随后可由 Spring Boot 直接提供单页应用。
 
-## 文档
+### 测试
 
-- [部署文档](docs/deployment.md) — 完整部署指南、升级回滚、常见问题
-- [项目说明](docs/project-guide.md) — 模块详解、接口文档、开发约定
+```bash
+mvn test
+```
 
----
+## Docker 部署
 
-## 安全说明
+仓库包含多阶段 Dockerfile：
 
-- `docker/deploy/.env` 包含敏感信息，**禁止提交到版本控制**
-- 生产环境建议 `LANGSMITH_CAPTURE_CONTENT=false`，避免患者文本外传
-- 模型 API Key 和数据库密码通过环境变量注入，不要硬编码
-- 建议为镜像拉取创建只读账号，不要共享个人主账号
+1. Node 20 构建前端。
+2. Maven + Temurin 17 构建 Spring Boot JAR。
+3. Temurin 17 JRE 运行最终应用。
 
----
+Compose 配置包含应用、Nginx、PostgreSQL/pgvector、Redis 和 Neo4j。部署前请在运行环境中提供必要环境变量，尤其是模型 API Key、数据库连接和图数据库连接信息。
+
+```bash
+docker compose -f docker/deploy/docker-compose.yml up -d
+```
+
+## API 概览
+
+| Method | Path | Source | 说明 |
+|--------|------|--------|------|
+| POST | `/api/auth/register` | `AuthController` | 医生注册并建立会话 |
+| POST | `/api/auth/login` | `AuthController` | 医生登录 |
+| GET | `/api/auth/me` | `AuthController` | 获取当前登录医生 |
+| POST | `/api/auth/logout` | `AuthController` | 退出登录 |
+| GET | `/api/workspace/patients` | `MedicalWorkspaceController` | 当前医生患者列表 |
+| POST | `/api/workspace/patients` | `MedicalWorkspaceController` | 新增患者 |
+| PUT | `/api/workspace/patients/{patientId}` | `MedicalWorkspaceController` | 更新患者 |
+| DELETE | `/api/workspace/patients/{patientId}` | `MedicalWorkspaceController` | 删除患者 |
+| GET | `/api/workspace/sessions` | `MedicalWorkspaceController` | 问诊会话列表 |
+| GET | `/api/workspace/sessions/{sessionId}` | `MedicalWorkspaceController` | 会话详情 |
+| DELETE | `/api/workspace/sessions/{sessionId}` | `MedicalWorkspaceController` | 删除会话 |
+| GET | `/api/workspace/diagnosis` | `MedicalWorkspaceController` | 最近诊断快照 |
+| POST | `/api/workspace/consultations` | `MedicalWorkspaceController` | 提交问诊并触发诊断工作流 |
+| POST | `/api/workspace/medical-evidence/analyze` | `MedicalWorkspaceController` | 上传并识别 CT/检查资料 |
+| POST | `/api/workspace/doctor-review` | `MedicalWorkspaceController` | 医生复核并保存最终记录 |
+| GET | `/api/workspace/diagnosis-records` | `MedicalWorkspaceController` | 最终诊断记录列表 |
+| DELETE | `/api/workspace/diagnosis-records/{recordId}` | `MedicalWorkspaceController` | 删除诊断记录 |
+| GET | `/api/workspace/doctor-stats` | `MedicalWorkspaceController` | 医生工作台统计 |
+| POST | `/api/workspace/graph-explore` | `MedicalWorkspaceController` | 查询 Neo4j 图谱路径 |
+| POST | `/api/workspace/import-case` | `MedicalWorkspaceController` | 导入病例文件并生成患者/记录 |
+
+WebSocket/STOMP 用于推送诊断流程动态，前端订阅 `/topic/pipeline`。
+
+## 检查资料与病例文件
+
+当前允许上传：
+
+- PDF
+- DOCX
+- JPG / JPEG
+- PNG
+
+后端限制单文件与请求大小为 50MB。检查资料识别成功后状态为待医生确认；未确认的结构化检查资料不会进入诊断 Agent。
+
+## 知识图谱与向量导入
+
+- Neo4j 图谱推理入口位于 `graphkg` 包，查询“症状 -> 疾病 -> 治疗/检查”路径。
+- 图谱导入入口为 `MedicalKnowledgeGraphImportApplication`。
+- pgvector / embedding 支持位于 `rag` 与 `importer` 包，向量导入入口为 `MedicalJsonVectorImportApplication`。
+- 图谱是否命中取决于 Neo4j 中是否已有对应节点和关系；代码中只负责抽取查询词并执行路径查询。
+
+## 安全与隐私
+
+我不会把本地私有环境配置、密钥文件或生产凭据写进 README，也不会在文档中复述这些文件内容。仓库中的 `application.yml` 用于说明配置结构，真实凭据请继续放在部署环境或本机私有配置中。
+
+患者主诉、检查资料、诊断结论和医生意见都属于敏感医疗信息。演示和开发时请使用脱敏数据；启用追踪、日志或第三方模型服务前，请先确认数据合规边界。
 
 ## License
 
-本项目采用 [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0) 开源许可证。
-
-你可以在遵守许可证条款的前提下自由使用、复制、修改、分发和商用本项目代码。请在分发源码或二进制产物时保留原始版权声明、许可证文本和必要的声明文件。
-
-> 本项目为医疗辅助诊断系统示例，开源许可证仅覆盖代码授权，不构成医疗建议、临床诊断依据或合规承诺。实际部署和使用时，请遵守所在地医疗、数据安全和隐私保护相关法律法规。
+我还没有在仓库中看到许可证文件；在补充 `LICENSE` 之前，这个项目默认只按仓库当前权限使用。

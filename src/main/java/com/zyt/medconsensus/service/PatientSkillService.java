@@ -214,6 +214,8 @@ public class PatientSkillService {
         uploadedPatientFacts(request).forEach(item -> builder.append("- ").append(item).append("\n"));
         addLine(builder, "Chief complaint", request.getChiefComplaint());
         addLine(builder, "Patient input", request.getMessage());
+        addLine(builder, "Uploaded evidence file", request.getMedicalEvidenceFileName());
+        addLine(builder, "Structured medical evidence", request.getMedicalEvidence());
         addLine(builder, "Collector summary", collectorSummary);
 
         String categorySnapshot = categorySnapshot(request);

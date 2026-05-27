@@ -1,6 +1,10 @@
 spring:
   application:
     name: MedConsenus
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
   data:
       redis:
         host: ${REDIS_HOST:127.0.0.1}
@@ -37,6 +41,13 @@ spring:
         base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
         model: deepseek-v4-flash
         temperature: 0.3
+
+      # 视觉模型：医学图片 / CT截图 / 检查报告 PDF 的结构化识别
+      vision:
+        api-key: ${OPENAI_API_KEY:}
+        base-url: https://api.zhuoruan.xyz/v1
+        model: gpt-5.4
+        temperature: 0.1
 
       # Reviewer 评审模型
       reviewers:
@@ -119,6 +130,7 @@ app:
   graph-import:
     batch-size: 20
     max-records: 0
+    source-file: ""
     llm-model: deepseek-v4-flash
     llm-temperature: 0.1
     llm-base-url: https://dashscope.aliyuncs.com/compatible-mode/v1

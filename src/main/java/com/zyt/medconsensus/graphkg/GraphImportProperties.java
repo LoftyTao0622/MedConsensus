@@ -9,6 +9,7 @@ public class GraphImportProperties {
 
     private int batchSize = 20;
     private long maxRecords = 0;
+    private String sourceFile = "";
     private String llmModel = "deepseek-v4-flash";
     private double llmTemperature = 0.1;
     private String llmBaseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1";
@@ -28,6 +29,14 @@ public class GraphImportProperties {
 
     public void setMaxRecords(long maxRecords) {
         this.maxRecords = maxRecords;
+    }
+
+    public String getSourceFile() {
+        return sourceFile;
+    }
+
+    public void setSourceFile(String sourceFile) {
+        this.sourceFile = sourceFile;
     }
 
     public String getLlmModel() {

@@ -5,7 +5,7 @@ function percent(value) {
   return `${Math.round(value * 100)}%`;
 }
 
-export function DiagnosticPanel({ diagnosis, pipelineEvents, onSimulate, busy }) {
+export function DiagnosticPanel({ diagnosis, pipelineEvents, onSimulate, onAppendPatientEvidence, busy }) {
   const confidence = diagnosis?.confidence ?? 0;
   const [patientEvidence, setPatientEvidence] = useState("");
   const [submittedEvidence, setSubmittedEvidence] = useState("");
@@ -24,7 +24,10 @@ export function DiagnosticPanel({ diagnosis, pipelineEvents, onSimulate, busy })
   );
 
   function handleEvidenceSubmit() {
-    setSubmittedEvidence(patientEvidence.trim());
+    const normalized = patientEvidence.trim();
+    setSubmittedEvidence(normalized);
+    onAppendPatientEvidence?.(normalized);
+    setPatientEvidence("");
   }
 
   return (
@@ -115,13 +118,13 @@ export function DiagnosticPanel({ diagnosis, pipelineEvents, onSimulate, busy })
             onClick={handleEvidenceSubmit}
             disabled={!patientEvidence.trim()}
           >
-            保存补充依据
+            填入患者诉求
           </button>
         </div>
 
         {submittedEvidence ? (
           <div className="patient-evidence-preview">
-            <span>已保存内容</span>
+            <span>已填入患者诉求</span>
             <p>{submittedEvidence}</p>
           </div>
         ) : null}
