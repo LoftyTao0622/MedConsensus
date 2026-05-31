@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/java-17-orange?style=flat-square&logo=openjdk&logoColor=white" alt="java">
   <img src="https://img.shields.io/badge/spring--boot-3.3.0-green?style=flat-square&logo=springboot&logoColor=white" alt="spring-boot">
   <img src="https://img.shields.io/badge/react-18-61DAFB?style=flat-square&logo=react&logoColor=white" alt="react">
-  <img src="https://img.shields.io/badge/license-未声明-yellow?style=flat-square" alt="license">
+  <img src="https://img.shields.io/badge/license-MIT-yellow?style=flat-square" alt="license">
   <img src="https://img.shields.io/badge/docker-compose-blue?style=flat-square&logo=docker&logoColor=white" alt="docker">
 </p>
 
@@ -268,4 +268,6 @@ WebSocket/STOMP 用于推送诊断流程动态，前端订阅 `/topic/pipeline`�
 
 ## License
 
-当前仓库未提供独立的 `LICENSE` 文件。对外分发或开源前，请先补充明确的许可证文本。
+本项目基于 MIT License 开源，允许自由使用、复制、修改、合并、发布、分发、再授权和销售本软件副本。使用时请保留原始版权声明和许可证声明。
+
+完整许可证文本见 [LICENSE](LICENSE)。
