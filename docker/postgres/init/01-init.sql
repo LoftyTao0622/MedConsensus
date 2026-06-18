@@ -77,6 +77,42 @@ BEFORE UPDATE ON patient_basic_info
 FOR EACH ROW
 EXECUTE FUNCTION set_patient_basic_info_update_time();
 
+CREATE TABLE IF NOT EXISTS final_diagnosis_record (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    session_id VARCHAR(64) NOT NULL UNIQUE,
+    chief_complaint TEXT,
+    ai_conclusion TEXT,
+    doctor_opinion TEXT,
+    final_conclusion TEXT,
+    risk_level VARCHAR(32),
+    confidence DOUBLE PRECISION,
+    review_status VARCHAR(32) NOT NULL,
+    treatment_keywords TEXT,
+    treatment_source VARCHAR(32),
+    treatment_advice TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS final_diagnosis_record_user_created_idx
+ON final_diagnosis_record (user_id, created_at DESC);
+
+CREATE OR REPLACE FUNCTION set_final_diagnosis_record_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_final_diagnosis_record_updated_at ON final_diagnosis_record;
+
+CREATE TRIGGER trg_final_diagnosis_record_updated_at
+BEFORE UPDATE ON final_diagnosis_record
+FOR EACH ROW
+EXECUTE FUNCTION set_final_diagnosis_record_updated_at();
+
 CREATE TABLE IF NOT EXISTS disease_medicine (
     id BIGSERIAL PRIMARY KEY,
     disease_name VARCHAR(255) NOT NULL,
