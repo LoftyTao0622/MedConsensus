@@ -11,5 +11,7 @@ public interface PatientBasicInfoMapper extends JpaRepository<PatientBasicInfo, 
 
     Optional<PatientBasicInfo> findByIdAndDoctorId(Long id, Long doctorId);
 
+    Optional<PatientBasicInfo> findByDoctorIdAndPatientAccountId(Long doctorId, Long patientAccountId);
+
     boolean existsByIdAndDoctorId(Long id, Long doctorId);
 }

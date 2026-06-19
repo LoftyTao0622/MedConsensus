@@ -22,6 +22,9 @@ public class PatientBasicInfo {
     @Column(name = "doctor_id")
     private Long doctorId;
 
+    @Column(name = "patient_account_id")
+    private Long patientAccountId;
+
     @Column(name = "patient_name", nullable = false, length = 100)
     private String patientName;
 
@@ -72,6 +75,14 @@ public class PatientBasicInfo {
 
     public void setDoctorId(Long doctorId) {
         this.doctorId = doctorId;
+    }
+
+    public Long getPatientAccountId() {
+        return patientAccountId;
+    }
+
+    public void setPatientAccountId(Long patientAccountId) {
+        this.patientAccountId = patientAccountId;
     }
 
     public String getPatientName() {

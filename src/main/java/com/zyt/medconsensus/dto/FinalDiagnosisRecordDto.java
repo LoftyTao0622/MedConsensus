@@ -15,6 +15,10 @@ public record FinalDiagnosisRecordDto(
         List<String> treatmentKeywords,
         String treatmentSource,
         String treatmentAdvice,
+        Long patientAccountId,
+        Long patientRecordId,
+        boolean publishedToPatient,
+        String publishedAt,
         String updatedAt
 ) {
 }

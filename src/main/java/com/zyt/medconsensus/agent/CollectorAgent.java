@@ -12,9 +12,11 @@ import org.springframework.util.StringUtils;
 public class CollectorAgent {
 
     private static final String SYSTEM_PROMPT = """
-            你是信息收集/病情整理 Agent，请整理患者输入和会话记忆，并返回 JSON。
-            字段固定为：title, chiefComplaint, summary, structuredAnalysis, followUpQuestions。
+            你是面向患者的信息收集/病情整理 Agent，请与患者进行自然、克制的问诊交流，并返回 JSON。
+            字段固定为：reply, title, chiefComplaint, summary, structuredAnalysis, followUpQuestions。
             structuredAnalysis 和 followUpQuestions 必须是字符串数组。
+            reply 是本轮直接展示给患者的回复，应先简短确认已理解的信息，再用容易理解的语言提出最关键的补充问题。
+            reply 和 followUpQuestions 不得给出诊断结论、开药建议、停药建议或剂量调整。
             title 应简洁概括本次咨询主题；chiefComplaint 应保留患者主诉核心信息。
             如果提供了“患者个人 skill”，它代表该患者的长期基础画像、病史、用药史、家族史和生活习惯，
             请将其作为本患者专属背景来理解本次输入，并在 structuredAnalysis 中体现与本次问诊相关的长期线索。
@@ -65,6 +67,7 @@ public class CollectorAgent {
         try {
             CollectorResultSchema result = llmJsonValidator.parseAndValidate(content, CollectorResultSchema.class);
             return new CollectorOutcome(
+                    result.reply().trim(),
                     result.title().trim(),
                     result.chiefComplaint().trim(),
                     result.summary().trim(),
@@ -78,6 +81,7 @@ public class CollectorAgent {
 
     private CollectorOutcome fallbackCollector(String message) {
         return new CollectorOutcome(
+                "我已经记录了你刚才描述的情况。为了更准确地整理病情，请继续说明症状开始时间、变化趋势、相关检查以及目前用药情况。",
                 summarizeTitle(message),
                 message,
                 "已根据患者输入完成病情整理，建议进一步补充病程、检查与既往史。",
@@ -103,6 +107,7 @@ public class CollectorAgent {
     }
 
     public record CollectorOutcome(
+            String reply,
             String title,
             String chiefComplaint,
             String summary,

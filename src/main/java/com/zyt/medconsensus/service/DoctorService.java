@@ -10,5 +10,5 @@ public interface DoctorService {
 
     AuthResponse login(LoginRequest request);
 
-    AuthResponse getCurrentUser(Long userId);
+    AuthResponse getCurrentUser(Long userId, String role);
 }

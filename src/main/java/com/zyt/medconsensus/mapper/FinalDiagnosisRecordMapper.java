@@ -9,7 +9,16 @@ public interface FinalDiagnosisRecordMapper extends JpaRepository<FinalDiagnosis
 
     Optional<FinalDiagnosisRecord> findByUserIdAndSessionId(Long userId, String sessionId);
 
+    Optional<FinalDiagnosisRecord> findByIdAndUserId(Long id, Long userId);
+
+    Optional<FinalDiagnosisRecord> findByIdAndPatientAccountIdAndPublishedToPatientTrue(
+            Long id,
+            Long patientAccountId
+    );
+
     void deleteByUserIdAndSessionId(Long userId, String sessionId);
 
     List<FinalDiagnosisRecord> findByUserIdOrderByCreatedAtDesc(Long userId);
+
+    List<FinalDiagnosisRecord> findByPatientAccountIdAndPublishedToPatientTrueOrderByPublishedAtDesc(Long patientAccountId);
 }

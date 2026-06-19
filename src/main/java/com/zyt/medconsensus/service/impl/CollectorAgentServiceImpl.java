@@ -25,6 +25,7 @@ import com.zyt.medconsensus.llm.AiWorkflowProperties;
 import com.zyt.medconsensus.llm.MultiModelGateway;
 import com.zyt.medconsensus.mapper.DiseaseMedicineMapper;
 import com.zyt.medconsensus.mapper.FinalDiagnosisRecordMapper;
+import com.zyt.medconsensus.mapper.PatientConsultationMapper;
 import com.zyt.medconsensus.observability.LangSmithTracingService;
 import com.zyt.medconsensus.service.CollectorAgentService;
 import com.zyt.medconsensus.service.PatientSkillService;
@@ -94,6 +95,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
     private final SimpMessagingTemplate messagingTemplate;
     private final DiseaseMedicineMapper diseaseMedicineMapper;
     private final FinalDiagnosisRecordMapper finalDiagnosisRecordMapper;
+    private final PatientConsultationMapper patientConsultationMapper;
     private final LangSmithTracingService tracingService;
     private final MedicalGraphReasoningService graphReasoningService;
     private final PatientSkillService patientSkillService;
@@ -113,6 +115,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
             SimpMessagingTemplate messagingTemplate,
             DiseaseMedicineMapper diseaseMedicineMapper,
             FinalDiagnosisRecordMapper finalDiagnosisRecordMapper,
+            PatientConsultationMapper patientConsultationMapper,
             LangSmithTracingService tracingService,
             MedicalGraphReasoningService graphReasoningService,
             PatientSkillService patientSkillService,
@@ -130,6 +133,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         this.messagingTemplate = messagingTemplate;
         this.diseaseMedicineMapper = diseaseMedicineMapper;
         this.finalDiagnosisRecordMapper = finalDiagnosisRecordMapper;
+        this.patientConsultationMapper = patientConsultationMapper;
         this.tracingService = tracingService;
         this.graphReasoningService = graphReasoningService;
         this.patientSkillService = patientSkillService;
@@ -172,7 +176,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         initialState.put("userId", userId);
         initialState.put("sessionId", resolvedSessionId);
         initialState.put("userMessage", workflowMessage);
-        initialState.put("memory", history.stream().map(MessageSnapshot::content).toList());
+        initialState.put("memory", history.stream().map(this::formatMessageForAgent).toList());
         initialState.put("patientName", request.getPatientName());
         initialState.put("patientSkill", patientSkill);
         initialState.put("retryCount", 0);
@@ -342,6 +346,13 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         record.setRiskLevel(request.getRiskLevel());
         record.setConfidence(request.getConfidence());
         record.setReviewStatus(StringUtils.hasText(request.getOpinion()) ? "DOCTOR_OVERRIDDEN" : "AI_CONFIRMED");
+        var patientConsultation = patientConsultationMapper
+                .findByDoctorIdAndSessionId(userId, request.getSessionId())
+                .orElse(null);
+        if (patientConsultation != null) {
+            record.setPatientAccountId(patientConsultation.getPatientAccountId());
+            record.setPatientRecordId(patientConsultation.getPatientRecordId());
+        }
 
         emit("TREATMENT", "Treatment Agent 正在根据医生最终诊断生成开药说明", 100);
         TreatmentAgent.TreatmentOutcome treatment = buildTreatmentAdvice(record);
@@ -350,6 +361,10 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         record.setTreatmentAdvice(treatment.advice());
 
         FinalDiagnosisRecord saved = finalDiagnosisRecordMapper.save(record);
+        if (patientConsultation != null) {
+            patientConsultation.setStatus("REPORT_READY");
+            patientConsultationMapper.save(patientConsultation);
+        }
         upsertSession(
                 userId,
                 request.getSessionId(),
@@ -452,6 +467,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
 
             Map<String, Object> updates = new LinkedHashMap<>();
             updates.put("title", result.title());
+            updates.put("collectorReply", result.reply());
             updates.put("chiefComplaint", result.chiefComplaint());
             updates.put("collectorSummary", result.summary());
             updates.put("structuredAnalysis", result.structuredAnalysis());
@@ -493,10 +509,17 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
                     stringListValue(state, "informationSufficiencyAnalysis")
             );
             structuredAnalysis.addAll(stringListValue(state, "structuredAnalysis"));
+            String reply = state.value("collectorReply", "");
+            if (!StringUtils.hasText(reply)) {
+                reply = "为了继续整理病情，请补充以下信息：\n"
+                        + mergedSuggestions.stream()
+                        .map(item -> "• " + item)
+                        .collect(java.util.stream.Collectors.joining("\n"));
+            }
 
             return Map.of(
                     "sessionStatus", "待补充信息",
-                    "finalConclusion", "当前信息尚不足以进入稳定诊断，请继续补充病情依据后再次整理。",
+                    "finalConclusion", reply,
                     "structuredAnalysis", structuredAnalysis,
                     "suggestions", mergedSuggestions,
                     "finalConfidence", 0.42d,
@@ -956,6 +979,11 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
                 .orElse("");
     }
 
+    private String formatMessageForAgent(MessageSnapshot message) {
+        String role = "assistant".equals(message.role()) ? "病情整理 Agent" : "患者";
+        return role + "：" + message.content();
+    }
+
     private String newSessionId() {
         return "chat-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
     }
@@ -1097,6 +1125,10 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
                 readStringList(record.getTreatmentKeywords()),
                 record.getTreatmentSource(),
                 record.getTreatmentAdvice(),
+                record.getPatientAccountId(),
+                record.getPatientRecordId(),
+                record.isPublishedToPatient(),
+                record.getPublishedAt() != null ? record.getPublishedAt().toString() : null,
                 record.getUpdatedAt() != null ? record.getUpdatedAt().toString() : null
         );
     }

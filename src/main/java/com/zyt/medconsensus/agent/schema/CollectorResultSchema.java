@@ -8,6 +8,7 @@ import java.util.List;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record CollectorResultSchema(
+        @NotBlank String reply,
         @NotBlank String title,
         @NotBlank String chiefComplaint,
         @NotBlank String summary,

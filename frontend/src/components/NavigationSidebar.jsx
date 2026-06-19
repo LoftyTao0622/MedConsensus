@@ -1,4 +1,4 @@
-import { Activity, FileSearch, LayoutDashboard, Stethoscope, Users, User, LogOut, Settings } from "lucide-react";
+import { Activity, FileSearch, LayoutDashboard, Stethoscope, Users, UserRoundCheck, User, LogOut, Settings } from "lucide-react";
 
 export function NavigationSidebar({ activeTab, onTabChange, currentUser, onLogout }) {
   const tabs = [
@@ -6,6 +6,7 @@ export function NavigationSidebar({ activeTab, onTabChange, currentUser, onLogou
     { id: "evidence", label: "检查资料", icon: <FileSearch size={20} /> },
     { id: "review", label: "评审细节", icon: <Activity size={20} /> },
     { id: "patients", label: "病例管理", icon: <Users size={20} /> },
+    { id: "collaboration", label: "医患协作", icon: <UserRoundCheck size={20} /> },
     { id: "doctor", label: "医生信息", icon: <User size={20} /> },
     { id: "settings", label: "系统设置", icon: <Settings size={20} /> },
   ];

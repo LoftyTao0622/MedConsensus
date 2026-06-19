@@ -124,3 +124,19 @@ export function fetchDiagnosisRecords() {
 export function deleteDiagnosisRecord(recordId) {
   return request(`/diagnosis-records/${recordId}`, { method: "DELETE" });
 }
+
+export function fetchDoctorCollaboration() {
+  return request("/collaboration");
+}
+
+export function approvePatientBinding(relationId) {
+  return request(`/collaboration/bindings/${relationId}/approve`, { method: "POST" });
+}
+
+export function confirmPatientEvidence(consultationId) {
+  return request(`/collaboration/consultations/${consultationId}/confirm-evidence`, { method: "POST" });
+}
+
+export function publishDiagnosisRecord(recordId) {
+  return request(`/diagnosis-records/${recordId}/publish`, { method: "POST" });
+}

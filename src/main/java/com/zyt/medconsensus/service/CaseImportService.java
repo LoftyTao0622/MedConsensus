@@ -372,6 +372,10 @@ public class CaseImportService {
                 null,
                 record.getTreatmentSource(),
                 record.getTreatmentAdvice(),
+                record.getPatientAccountId(),
+                record.getPatientRecordId(),
+                record.isPublishedToPatient(),
+                record.getPublishedAt() == null ? null : record.getPublishedAt().toString(),
                 record.getUpdatedAt() == null ? null : record.getUpdatedAt().toString()
         );
     }

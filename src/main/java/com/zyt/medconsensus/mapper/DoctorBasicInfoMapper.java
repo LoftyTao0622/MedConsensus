@@ -8,7 +8,11 @@ public interface DoctorBasicInfoMapper extends JpaRepository<DoctorBasicInfo, Lo
 
     Optional<DoctorBasicInfo> findByPhone(String phone);
 
+    Optional<DoctorBasicInfo> findByInviteCode(String inviteCode);
+
     boolean existsByUsername(String username);
 
     boolean existsByPhone(String phone);
+
+    boolean existsByInviteCode(String inviteCode);
 }

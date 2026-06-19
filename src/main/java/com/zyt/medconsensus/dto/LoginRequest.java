@@ -4,6 +4,8 @@ import jakarta.validation.constraints.NotBlank;
 
 public class LoginRequest {
 
+    private String role;
+
     @NotBlank
     private String phone;
 
@@ -12,6 +14,14 @@ public class LoginRequest {
 
     public String getPhone() {
         return phone;
+    }
+
+    public String getRole() {
+        return role;
+    }
+
+    public void setRole(String role) {
+        this.role = role;
     }
 
     public void setPhone(String phone) {

@@ -8,18 +8,19 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 
 @Entity
-@Table(name = "doctor_basic_info")
-public class DoctorBasicInfo {
+@Table(name = "patient_account")
+public class PatientAccount {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, unique = true, length = 100)
-    private String username;
+    @Column(name = "patient_name", nullable = false, length = 100)
+    private String patientName;
 
     @Column(name = "password_hash", nullable = false, length = 255)
     private String passwordHash;
@@ -27,14 +28,14 @@ public class DoctorBasicInfo {
     @Column(nullable = false, unique = true, length = 20)
     private String phone;
 
-    @Column(length = 100)
-    private String department;
+    @Column(length = 10)
+    private String gender;
 
-    @Column(length = 100)
-    private String title;
+    @Column
+    private Integer age;
 
-    @Column(name = "invite_code", unique = true, length = 20)
-    private String inviteCode;
+    @Column(precision = 5, scale = 2)
+    private BigDecimal weight;
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
@@ -62,12 +63,12 @@ public class DoctorBasicInfo {
         this.id = id;
     }
 
-    public String getUsername() {
-        return username;
+    public String getPatientName() {
+        return patientName;
     }
 
-    public void setUsername(String username) {
-        this.username = username;
+    public void setPatientName(String patientName) {
+        this.patientName = patientName;
     }
 
     public String getPasswordHash() {
@@ -86,43 +87,35 @@ public class DoctorBasicInfo {
         this.phone = phone;
     }
 
-    public String getDepartment() {
-        return department;
+    public String getGender() {
+        return gender;
     }
 
-    public void setDepartment(String department) {
-        this.department = department;
+    public void setGender(String gender) {
+        this.gender = gender;
     }
 
-    public String getTitle() {
-        return title;
+    public Integer getAge() {
+        return age;
     }
 
-    public void setTitle(String title) {
-        this.title = title;
+    public void setAge(Integer age) {
+        this.age = age;
     }
 
-    public String getInviteCode() {
-        return inviteCode;
+    public BigDecimal getWeight() {
+        return weight;
     }
 
-    public void setInviteCode(String inviteCode) {
-        this.inviteCode = inviteCode;
+    public void setWeight(BigDecimal weight) {
+        this.weight = weight;
     }
 
     public OffsetDateTime getCreatedAt() {
         return createdAt;
     }
 
-    public void setCreatedAt(OffsetDateTime createdAt) {
-        this.createdAt = createdAt;
-    }
-
     public OffsetDateTime getUpdatedAt() {
         return updatedAt;
-    }
-
-    public void setUpdatedAt(OffsetDateTime updatedAt) {
-        this.updatedAt = updatedAt;
     }
 }

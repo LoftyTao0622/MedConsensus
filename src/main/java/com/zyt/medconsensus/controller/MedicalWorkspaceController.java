@@ -50,6 +50,7 @@ import org.springframework.web.server.ResponseStatusException;
 public class MedicalWorkspaceController {
 
     private static final String SESSION_USER_ID = "CURRENT_USER_ID";
+    private static final String SESSION_USER_ROLE = "CURRENT_USER_ROLE";
 
     private final SimpMessagingTemplate messagingTemplate;
     private final CollectorAgentService collectorAgentService;
@@ -194,7 +195,8 @@ public class MedicalWorkspaceController {
     }
 
     @PostMapping("/simulate")
-    public DiagnosticResponse simulate() {
+    public DiagnosticResponse simulate(HttpSession session) {
+        currentUserId(session);
         return tracingService.traceWorkflow(
                 "MedConsenus Simulate Workflow",
                 0L,
@@ -307,7 +309,8 @@ public class MedicalWorkspaceController {
     }
 
     @PostMapping("/graph-explore")
-    public GraphExploreResponse graphExplore(@Valid @RequestBody GraphExploreRequest request) {
+    public GraphExploreResponse graphExplore(@Valid @RequestBody GraphExploreRequest request, HttpSession session) {
+        currentUserId(session);
         List<String> symptoms = List.of(request.query().split("[,，\\s]+"));
         List<MedicalGraphPath> paths = graphReasoningService.reasonBySymptoms(symptoms);
 
@@ -338,6 +341,10 @@ public class MedicalWorkspaceController {
                 null,
                 record.getTreatmentSource(),
                 record.getTreatmentAdvice(),
+                record.getPatientAccountId(),
+                record.getPatientRecordId(),
+                record.isPublishedToPatient(),
+                record.getPublishedAt() == null ? null : record.getPublishedAt().toString(),
                 record.getUpdatedAt() == null ? null : record.getUpdatedAt().toString()
         );
     }
@@ -367,7 +374,11 @@ public class MedicalWorkspaceController {
 
     private Long currentUserId(HttpSession session) {
         Object userId = session.getAttribute(SESSION_USER_ID);
+        Object role = session.getAttribute(SESSION_USER_ROLE);
         if (userId instanceof Long value) {
+            if ("PATIENT".equals(role)) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "当前账号不是医生");
+            }
             return value;
         }
         throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "当前未登录");

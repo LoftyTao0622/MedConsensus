@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class AuthController {
 
     private static final String SESSION_USER_ID = "CURRENT_USER_ID";
+    private static final String SESSION_USER_ROLE = "CURRENT_USER_ROLE";
 
     private final DoctorService doctorService;
 
@@ -29,6 +30,7 @@ public class AuthController {
     public AuthResponse register(@Valid @RequestBody RegisterRequest request, HttpSession session) {
         AuthResponse response = doctorService.register(request);
         session.setAttribute(SESSION_USER_ID, response.id());
+        session.setAttribute(SESSION_USER_ROLE, response.role());
         return response;
     }
 
@@ -36,13 +38,20 @@ public class AuthController {
     public AuthResponse login(@Valid @RequestBody LoginRequest request, HttpSession session) {
         AuthResponse response = doctorService.login(request);
         session.setAttribute(SESSION_USER_ID, response.id());
+        session.setAttribute(SESSION_USER_ROLE, response.role());
         return response;
     }
 
     @GetMapping("/me")
     public AuthResponse me(HttpSession session) {
         Object userId = session.getAttribute(SESSION_USER_ID);
-        return doctorService.getCurrentUser(userId instanceof Long ? (Long) userId : null);
+        Object role = session.getAttribute(SESSION_USER_ROLE);
+        AuthResponse response = doctorService.getCurrentUser(
+                userId instanceof Long ? (Long) userId : null,
+                role instanceof String ? (String) role : null
+        );
+        session.setAttribute(SESSION_USER_ROLE, response.role());
+        return response;
     }
 
     @PostMapping("/logout")

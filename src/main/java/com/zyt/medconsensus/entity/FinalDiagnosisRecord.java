@@ -21,6 +21,12 @@ public class FinalDiagnosisRecord {
     @Column(name = "user_id", nullable = false)
     private Long userId;
 
+    @Column(name = "patient_account_id")
+    private Long patientAccountId;
+
+    @Column(name = "patient_record_id")
+    private Long patientRecordId;
+
     @Column(name = "session_id", nullable = false, unique = true, length = 64)
     private String sessionId;
 
@@ -54,6 +60,12 @@ public class FinalDiagnosisRecord {
     @Column(name = "treatment_advice", columnDefinition = "TEXT")
     private String treatmentAdvice;
 
+    @Column(name = "published_to_patient", nullable = false)
+    private boolean publishedToPatient;
+
+    @Column(name = "published_at")
+    private OffsetDateTime publishedAt;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 
@@ -86,6 +98,22 @@ public class FinalDiagnosisRecord {
 
     public void setUserId(Long userId) {
         this.userId = userId;
+    }
+
+    public Long getPatientAccountId() {
+        return patientAccountId;
+    }
+
+    public void setPatientAccountId(Long patientAccountId) {
+        this.patientAccountId = patientAccountId;
+    }
+
+    public Long getPatientRecordId() {
+        return patientRecordId;
+    }
+
+    public void setPatientRecordId(Long patientRecordId) {
+        this.patientRecordId = patientRecordId;
     }
 
     public String getSessionId() {
@@ -174,6 +202,22 @@ public class FinalDiagnosisRecord {
 
     public void setTreatmentAdvice(String treatmentAdvice) {
         this.treatmentAdvice = treatmentAdvice;
+    }
+
+    public boolean isPublishedToPatient() {
+        return publishedToPatient;
+    }
+
+    public void setPublishedToPatient(boolean publishedToPatient) {
+        this.publishedToPatient = publishedToPatient;
+    }
+
+    public OffsetDateTime getPublishedAt() {
+        return publishedAt;
+    }
+
+    public void setPublishedAt(OffsetDateTime publishedAt) {
+        this.publishedAt = publishedAt;
     }
 
     public OffsetDateTime getCreatedAt() {

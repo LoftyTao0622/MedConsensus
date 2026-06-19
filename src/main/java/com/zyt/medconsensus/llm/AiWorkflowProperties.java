@@ -11,6 +11,7 @@ public class AiWorkflowProperties {
     private String baseUrl;
     private Chat chat = new Chat();
     private Collector collector = new Collector();
+    private Collector patientExplanation = new Collector();
     private Vision vision = new Vision();
     private Reviewers reviewers = new Reviewers();
     private Decision decision = new Decision();
@@ -46,6 +47,14 @@ public class AiWorkflowProperties {
 
     public void setCollector(Collector collector) {
         this.collector = collector;
+    }
+
+    public Collector getPatientExplanation() {
+        return patientExplanation;
+    }
+
+    public void setPatientExplanation(Collector patientExplanation) {
+        this.patientExplanation = patientExplanation;
     }
 
     public Vision getVision() {

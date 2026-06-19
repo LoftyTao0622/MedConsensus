@@ -8,6 +8,8 @@ import { DoctorPanel } from "./components/DoctorPanel";
 import { AuthPanel } from "./components/AuthPanel";
 import { DoctorProfileTab } from "./components/DoctorProfileTab";
 import { EvidenceReviewPanel } from "./components/EvidenceReviewPanel";
+import { PatientPortal } from "./components/PatientPortal";
+import { DoctorCollaborationPanel } from "./components/DoctorCollaborationPanel";
 import { fetchCurrentUser, logoutUser } from "./api/auth";
 import {
   createPatient,
@@ -24,7 +26,11 @@ import {
   submitDoctorReview,
   importCase,
   analyzeMedicalEvidence,
-  fetchDiagnosisRecords
+  fetchDiagnosisRecords,
+  fetchDoctorCollaboration,
+  approvePatientBinding,
+  confirmPatientEvidence,
+  publishDiagnosisRecord
 } from "./api/workspace";
 import { connectPipelineSocket } from "./api/websocket";
 
@@ -395,6 +401,8 @@ export default function App() {
   const [medicalEvidenceConfirmed, setMedicalEvidenceConfirmed] = useState(false);
   const [medicalEvidenceError, setMedicalEvidenceError] = useState("");
   const [medicalEvidenceReviewNote, setMedicalEvidenceReviewNote] = useState("");
+  const [collaboration, setCollaboration] = useState(null);
+  const [collaborationBusyAction, setCollaborationBusyAction] = useState("");
   const hasUploadedMedicalEvidence = Boolean(medicalEvidenceFile || medicalEvidence);
   const hasConfirmedMedicalEvidence = Boolean(medicalEvidence?.evidenceText && medicalEvidenceConfirmed);
   const canSubmitConsultation = Boolean(
@@ -440,16 +448,17 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!currentUser) {
+    if (!currentUser || currentUser.role !== "DOCTOR") {
       return;
     }
 
     async function bootstrap() {
-      const [patientData, sessionData, diagnosisData, recordsData] = await Promise.all([
+      const [patientData, sessionData, diagnosisData, recordsData, collaborationData] = await Promise.all([
         fetchPatients(),
         fetchSessions(),
         fetchDiagnosis(),
-        fetchDiagnosisRecords().catch(() => [])
+        fetchDiagnosisRecords().catch(() => []),
+        fetchDoctorCollaboration().catch(() => null)
       ]);
 
       const normalizedPatients = patientData.map(patientFromApi);
@@ -458,6 +467,7 @@ export default function App() {
       setSessions(sessionData);
       setDiagnosis(diagnosisData);
       setDiagnosisRecords(recordsData);
+      setCollaboration(collaborationData);
     }
 
     bootstrap().catch((error) => {
@@ -466,7 +476,7 @@ export default function App() {
   }, [currentUser]);
 
   useEffect(() => {
-    if (!currentUser) {
+    if (!currentUser || currentUser.role !== "DOCTOR") {
       return undefined;
     }
 
@@ -498,6 +508,7 @@ export default function App() {
       setConsultationInput("");
       setActiveSessionId(null);
       setSessionDetail(null);
+      setCollaboration(null);
       setPipelineEvents(initialEvents);
       setAuthChecked(true);
     }
@@ -736,6 +747,12 @@ export default function App() {
                 finalRecord: response.finalRecord
               }
         );
+        const [recordsData, collaborationData] = await Promise.all([
+          fetchDiagnosisRecords().catch(() => diagnosisRecords),
+          fetchDoctorCollaboration().catch(() => collaboration)
+        ]);
+        setDiagnosisRecords(recordsData);
+        setCollaboration(collaborationData);
       }
       if (!customOpinion) {
         setOpinion("");
@@ -934,6 +951,59 @@ export default function App() {
     setDragOver(false);
   }
 
+  async function refreshCollaboration() {
+    const [collaborationData, recordsData] = await Promise.all([
+      fetchDoctorCollaboration(),
+      fetchDiagnosisRecords()
+    ]);
+    setCollaboration(collaborationData);
+    setDiagnosisRecords(recordsData);
+  }
+
+  async function handleApprovePatientBinding(relationId) {
+    setCollaborationBusyAction(`binding-${relationId}`);
+    setFeedback("");
+    try {
+      await approvePatientBinding(relationId);
+      const [patientData] = await Promise.all([fetchPatients(), refreshCollaboration()]);
+      setPatients(patientData.map(patientFromApi));
+      setFeedback("医患绑定已确认，患者现在可以发起问诊。");
+    } catch (error) {
+      setFeedback(`确认绑定失败: ${error.message}`);
+    } finally {
+      setCollaborationBusyAction("");
+    }
+  }
+
+  async function handleConfirmPatientEvidence(consultationId) {
+    setCollaborationBusyAction(`evidence-${consultationId}`);
+    setFeedback("");
+    try {
+      await confirmPatientEvidence(consultationId);
+      const [sessionData] = await Promise.all([fetchSessions(), refreshCollaboration()]);
+      setSessions(sessionData);
+      setFeedback("患者检查资料已确认，并已进入诊断 Agent。");
+    } catch (error) {
+      setFeedback(`确认检查资料失败: ${error.message}`);
+    } finally {
+      setCollaborationBusyAction("");
+    }
+  }
+
+  async function handlePublishDiagnosisRecord(recordId) {
+    setCollaborationBusyAction(`publish-${recordId}`);
+    setFeedback("");
+    try {
+      await publishDiagnosisRecord(recordId);
+      await refreshCollaboration();
+      setFeedback("诊断报告已发布给患者。");
+    } catch (error) {
+      setFeedback(`发布报告失败: ${error.message}`);
+    } finally {
+      setCollaborationBusyAction("");
+    }
+  }
+
   if (!authChecked) {
     return (
       <div className="auth-shell">
@@ -950,6 +1020,10 @@ export default function App() {
 
   if (!currentUser) {
     return <AuthPanel onAuthenticated={handleAuthenticated} />;
+  }
+
+  if (currentUser.role === "PATIENT") {
+    return <PatientPortal currentUser={currentUser} onLogout={handleLogout} />;
   }
 
   return (
@@ -1245,6 +1319,22 @@ export default function App() {
               </div>
             )}
           </div>
+        )}
+
+        {activeTab === "collaboration" && (
+          <DoctorCollaborationPanel
+            collaboration={collaboration}
+            diagnosisRecords={diagnosisRecords}
+            busyAction={collaborationBusyAction}
+            feedback={feedback}
+            onApproveBinding={handleApprovePatientBinding}
+            onConfirmEvidence={handleConfirmPatientEvidence}
+            onOpenSession={(sessionId) => {
+              handleSelectSession(sessionId);
+              setActiveTab("workspace");
+            }}
+            onPublishReport={handlePublishDiagnosisRecord}
+          />
         )}
 
         {activeTab === "doctor" && (

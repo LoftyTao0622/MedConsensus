@@ -16,6 +16,7 @@ const registerInitialState = {
 };
 
 export function AuthPanel({ onAuthenticated }) {
+  const [role, setRole] = useState("DOCTOR");
   const [mode, setMode] = useState("login");
   const [loginForm, setLoginForm] = useState(loginInitialState);
   const [registerForm, setRegisterForm] = useState(registerInitialState);
@@ -35,7 +36,7 @@ export function AuthPanel({ onAuthenticated }) {
     setError("");
 
     try {
-      const user = await loginUser(loginForm);
+      const user = await loginUser({ ...loginForm, role });
       onAuthenticated(user);
     } catch (requestError) {
       setError(requestError.message);
@@ -50,7 +51,7 @@ export function AuthPanel({ onAuthenticated }) {
     setError("");
 
     try {
-      const user = await registerUser(registerForm);
+      const user = await registerUser({ ...registerForm, role });
       onAuthenticated(user);
     } catch (requestError) {
       setError(requestError.message);
@@ -72,9 +73,33 @@ export function AuthPanel({ onAuthenticated }) {
           <p className="eyebrow">Medical Consensus Platform</p>
           <h1>共智专医</h1>
           <p>
-            医生登录后即可进入 AI 诊断协作台，管理患者基础信息、查看多 Agent 诊断输出，
-            并在医生审核环节提交专业意见。
+            {role === "DOCTOR"
+              ? "进入 AI 诊断协作台，管理患者资料、处理患者问诊，并在审核环节提交专业意见。"
+              : "提交症状和检查资料，回答医生追问，并查看医生审核后发布的诊断报告。"}
           </p>
+        </div>
+
+        <div className="role-switch" aria-label="选择登录角色">
+          <button
+            className={role === "DOCTOR" ? "role-option active" : "role-option"}
+            type="button"
+            onClick={() => {
+              setRole("DOCTOR");
+              setError("");
+            }}
+          >
+            我是医生
+          </button>
+          <button
+            className={role === "PATIENT" ? "role-option active" : "role-option"}
+            type="button"
+            onClick={() => {
+              setRole("PATIENT");
+              setError("");
+            }}
+          >
+            我是患者
+          </button>
         </div>
 
         <div className="auth-switch">
@@ -131,19 +156,19 @@ export function AuthPanel({ onAuthenticated }) {
             </label>
 
             <button className="primary-button full" type="submit" disabled={submitting}>
-              {submitting ? "登录中..." : "登录进入工作台"}
+              {submitting ? "登录中..." : role === "DOCTOR" ? "登录进入医生工作台" : "登录进入患者服务台"}
             </button>
           </form>
         ) : (
           <form className="auth-form auth-form-grid" onSubmit={handleRegisterSubmit}>
             <label>
-              医生姓名
+              {role === "DOCTOR" ? "医生姓名" : "患者姓名"}
               <input
                 value={registerForm.username}
                 onChange={(event) =>
                   updateForm(setRegisterForm, registerForm, "username", event.target.value)
                 }
-                placeholder="请输入医生姓名或登录名"
+                placeholder={role === "DOCTOR" ? "请输入医生姓名或登录名" : "请输入患者姓名"}
                 required
               />
             </label>
@@ -172,29 +197,75 @@ export function AuthPanel({ onAuthenticated }) {
                 required
               />
             </label>
-            <label>
-              科室
-              <input
-                value={registerForm.department}
-                onChange={(event) =>
-                  updateForm(setRegisterForm, registerForm, "department", event.target.value)
-                }
-                placeholder="例如：儿科、呼吸内科"
-              />
-            </label>
-            <label>
-              职称
-              <input
-                value={registerForm.title}
-                onChange={(event) =>
-                  updateForm(setRegisterForm, registerForm, "title", event.target.value)
-                }
-                placeholder="例如：主治医师"
-              />
-            </label>
+            {role === "DOCTOR" ? (
+              <>
+                <label>
+                  科室
+                  <input
+                    value={registerForm.department}
+                    onChange={(event) =>
+                      updateForm(setRegisterForm, registerForm, "department", event.target.value)
+                    }
+                    placeholder="例如：儿科、呼吸内科"
+                  />
+                </label>
+                <label>
+                  职称
+                  <input
+                    value={registerForm.title}
+                    onChange={(event) =>
+                      updateForm(setRegisterForm, registerForm, "title", event.target.value)
+                    }
+                    placeholder="例如：主治医师"
+                  />
+                </label>
+              </>
+            ) : (
+              <>
+                <label>
+                  性别
+                  <select
+                    value={registerForm.gender || ""}
+                    onChange={(event) =>
+                      updateForm(setRegisterForm, registerForm, "gender", event.target.value)
+                    }
+                  >
+                    <option value="">请选择</option>
+                    <option value="男">男</option>
+                    <option value="女">女</option>
+                    <option value="其他">其他</option>
+                  </select>
+                </label>
+                <label>
+                  年龄
+                  <input
+                    type="number"
+                    min="0"
+                    value={registerForm.age || ""}
+                    onChange={(event) =>
+                      updateForm(setRegisterForm, registerForm, "age", event.target.value)
+                    }
+                    placeholder="请输入年龄"
+                  />
+                </label>
+                <label>
+                  体重（kg）
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    value={registerForm.weight || ""}
+                    onChange={(event) =>
+                      updateForm(setRegisterForm, registerForm, "weight", event.target.value)
+                    }
+                    placeholder="请输入体重"
+                  />
+                </label>
+              </>
+            )}
 
             <button className="primary-button full auth-submit" type="submit" disabled={submitting}>
-              {submitting ? "注册中..." : "注册并进入工作台"}
+              {submitting ? "注册中..." : role === "DOCTOR" ? "注册并进入医生工作台" : "注册并进入患者服务台"}
             </button>
           </form>
         )}
