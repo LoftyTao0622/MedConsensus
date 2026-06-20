@@ -44,6 +44,10 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.springframework.http.HttpStatus;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -60,6 +64,9 @@ public class PatientPortalServiceImpl implements PatientPortalService {
     private static final String EVIDENCE_NONE = "NONE";
     private static final String EVIDENCE_PENDING = "PENDING_DOCTOR";
     private static final String EVIDENCE_CONFIRMED = "CONFIRMED";
+    private static final String EVIDENCE_PROCESSING = "PROCESSING";
+    private static final String CONSULTATION_REPLY_PROCESSING = "PROCESSING_PATIENT_REPLY";
+    private static final String CONSULTATION_EVIDENCE_PROCESSING = "PROCESSING_EVIDENCE";
     private static final int EXPLANATION_HISTORY_LIMIT = 20;
     private static final TypeReference<List<MessageHistoryDto>> EXPLANATION_HISTORY_TYPE =
             new TypeReference<>() {
@@ -78,6 +85,7 @@ public class PatientPortalServiceImpl implements PatientPortalService {
     private final AiWorkflowProperties aiWorkflowProperties;
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
+    private final RedissonClient redissonClient;
 
     public PatientPortalServiceImpl(
             PatientAccountMapper patientAccountMapper,
@@ -92,7 +100,8 @@ public class PatientPortalServiceImpl implements PatientPortalService {
             PatientExplanationAgent patientExplanationAgent,
             AiWorkflowProperties aiWorkflowProperties,
             StringRedisTemplate redisTemplate,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            RedissonClient redissonClient
     ) {
         this.patientAccountMapper = patientAccountMapper;
         this.doctorBasicInfoMapper = doctorBasicInfoMapper;
@@ -107,6 +116,7 @@ public class PatientPortalServiceImpl implements PatientPortalService {
         this.aiWorkflowProperties = aiWorkflowProperties;
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
+        this.redissonClient = redissonClient;
     }
 
     @Override
@@ -181,25 +191,62 @@ public class PatientPortalServiceImpl implements PatientPortalService {
             Long consultationId,
             PatientMessageRequest request
     ) {
-        PatientConsultation consultation = consultationMapper
-                .findByIdAndPatientAccountId(consultationId, patientAccountId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "未找到该问诊"));
-        if (!"NEEDS_PATIENT_REPLY".equals(consultation.getStatus())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "本轮病情信息已提交医生，暂不能继续修改");
-        }
-        PatientAccount patient = requirePatient(patientAccountId);
-        PatientBasicInfo patientRecord = patientBasicInfoMapper.findById(consultation.getPatientRecordId())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "患者档案不存在"));
-
-        ConsultationRequest agentRequest = buildAgentRequest(
-                patient,
-                patientRecord,
-                consultation.getSessionId(),
-                request.message()
+        return withConsultationLock(
+                consultationId,
+                () -> answerQuestionLocked(patientAccountId, consultationId, request)
         );
-        ConsultationResponse response = collectorAgentService.organize(consultation.getDoctorId(), agentRequest);
-        consultation.setStatus(normalizeConsultationStatus(response.session().status()));
-        return toPatientConsultationDto(consultationMapper.save(consultation));
+    }
+
+    private PatientConsultationDto answerQuestionLocked(
+            Long patientAccountId,
+            Long consultationId,
+            PatientMessageRequest request
+    ) {
+        int claimed = consultationMapper.transitionPatientStatus(
+                consultationId,
+                patientAccountId,
+                "NEEDS_PATIENT_REPLY",
+                CONSULTATION_REPLY_PROCESSING
+        );
+        if (claimed == 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "本轮病情信息已提交或正在处理中");
+        }
+
+        try {
+            PatientConsultation consultation = consultationMapper
+                    .findByIdAndPatientAccountId(consultationId, patientAccountId)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "未找到该问诊"));
+            PatientAccount patient = requirePatient(patientAccountId);
+            PatientBasicInfo patientRecord = patientBasicInfoMapper.findById(consultation.getPatientRecordId())
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "患者档案不存在"));
+
+            ConsultationRequest agentRequest = buildAgentRequest(
+                    patient,
+                    patientRecord,
+                    consultation.getSessionId(),
+                    request.message()
+            );
+            ConsultationResponse response = collectorAgentService.organize(consultation.getDoctorId(), agentRequest);
+            String nextStatus = normalizeConsultationStatus(response.session().status());
+            int completed = consultationMapper.transitionPatientStatus(
+                    consultationId,
+                    patientAccountId,
+                    CONSULTATION_REPLY_PROCESSING,
+                    nextStatus
+            );
+            if (completed == 0) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "问诊状态已被其他请求修改");
+            }
+            return toPatientConsultationDto(consultationMapper.findById(consultationId).orElseThrow());
+        } catch (RuntimeException exception) {
+            consultationMapper.transitionPatientStatus(
+                    consultationId,
+                    patientAccountId,
+                    CONSULTATION_REPLY_PROCESSING,
+                    "NEEDS_PATIENT_REPLY"
+            );
+            throw exception;
+        }
     }
 
     @Override
@@ -208,16 +255,21 @@ public class PatientPortalServiceImpl implements PatientPortalService {
             Long consultationId,
             MultipartFile file
     ) throws IOException {
-        PatientConsultation consultation = consultationMapper
-                .findByIdAndPatientAccountId(consultationId, patientAccountId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "未找到该问诊"));
-        MedicalEvidenceAnalysisResponse analysis = caseImportService.analyzeMedicalEvidence(file);
-        consultation.setEvidenceStatus(EVIDENCE_PENDING);
-        consultation.setEvidenceFileName(analysis.fileName());
-        consultation.setEvidenceText(analysis.evidenceText());
-        consultation.setStatus("WAITING_DOCTOR_EVIDENCE_REVIEW");
-        consultationMapper.save(consultation);
-        return analysis;
+        RLock lock = acquireConsultationLock(consultationId);
+        try {
+            PatientConsultation consultation = consultationMapper
+                    .findByIdAndPatientAccountId(consultationId, patientAccountId)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "未找到该问诊"));
+            MedicalEvidenceAnalysisResponse analysis = caseImportService.analyzeMedicalEvidence(file);
+            consultation.setEvidenceStatus(EVIDENCE_PENDING);
+            consultation.setEvidenceFileName(analysis.fileName());
+            consultation.setEvidenceText(analysis.evidenceText());
+            consultation.setStatus("WAITING_DOCTOR_EVIDENCE_REVIEW");
+            consultationMapper.save(consultation);
+            return analysis;
+        } finally {
+            releaseLock(lock);
+        }
     }
 
     @Override
@@ -301,30 +353,66 @@ public class PatientPortalServiceImpl implements PatientPortalService {
 
     @Override
     public PatientConsultationDto confirmEvidence(Long doctorId, Long consultationId) {
-        PatientConsultation consultation = consultationMapper.findByIdAndDoctorId(consultationId, doctorId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "未找到该患者问诊"));
-        if (!EVIDENCE_PENDING.equals(consultation.getEvidenceStatus())
-                || !StringUtils.hasText(consultation.getEvidenceText())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "当前没有待确认的检查资料");
+        return withConsultationLock(
+                consultationId,
+                () -> confirmEvidenceLocked(doctorId, consultationId)
+        );
+    }
+
+    private PatientConsultationDto confirmEvidenceLocked(Long doctorId, Long consultationId) {
+        int claimed = consultationMapper.transitionEvidenceStatus(
+                consultationId,
+                doctorId,
+                EVIDENCE_PENDING,
+                EVIDENCE_PROCESSING,
+                CONSULTATION_EVIDENCE_PROCESSING
+        );
+        if (claimed == 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "检查资料已确认或正在处理中");
         }
 
-        PatientAccount patient = requirePatient(consultation.getPatientAccountId());
-        PatientBasicInfo patientRecord = patientBasicInfoMapper.findById(consultation.getPatientRecordId())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "患者档案不存在"));
-        ConsultationRequest request = buildAgentRequest(
-                patient,
-                patientRecord,
-                consultation.getSessionId(),
-                "患者已补充检查资料，请结合本轮问诊继续评估。"
-        );
-        request.setMedicalEvidence(consultation.getEvidenceText());
-        request.setMedicalEvidenceFileName(consultation.getEvidenceFileName());
-        request.setMedicalEvidenceConfirmed(true);
+        try {
+            PatientConsultation consultation = consultationMapper.findByIdAndDoctorId(consultationId, doctorId)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "未找到该患者问诊"));
+            if (!StringUtils.hasText(consultation.getEvidenceText())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "当前没有待确认的检查资料");
+            }
 
-        ConsultationResponse response = collectorAgentService.organize(doctorId, request);
-        consultation.setEvidenceStatus(EVIDENCE_CONFIRMED);
-        consultation.setStatus(normalizeConsultationStatus(response.session().status()));
-        return toPatientConsultationDto(consultationMapper.save(consultation));
+            PatientAccount patient = requirePatient(consultation.getPatientAccountId());
+            PatientBasicInfo patientRecord = patientBasicInfoMapper.findById(consultation.getPatientRecordId())
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "患者档案不存在"));
+            ConsultationRequest request = buildAgentRequest(
+                    patient,
+                    patientRecord,
+                    consultation.getSessionId(),
+                    "患者已补充检查资料，请结合本轮问诊继续评估。"
+            );
+            request.setMedicalEvidence(consultation.getEvidenceText());
+            request.setMedicalEvidenceFileName(consultation.getEvidenceFileName());
+            request.setMedicalEvidenceConfirmed(true);
+
+            ConsultationResponse response = collectorAgentService.organize(doctorId, request);
+            int completed = consultationMapper.transitionEvidenceStatus(
+                    consultationId,
+                    doctorId,
+                    EVIDENCE_PROCESSING,
+                    EVIDENCE_CONFIRMED,
+                    normalizeConsultationStatus(response.session().status())
+            );
+            if (completed == 0) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "检查资料状态已被其他请求修改");
+            }
+            return toPatientConsultationDto(consultationMapper.findById(consultationId).orElseThrow());
+        } catch (RuntimeException exception) {
+            consultationMapper.transitionEvidenceStatus(
+                    consultationId,
+                    doctorId,
+                    EVIDENCE_PROCESSING,
+                    EVIDENCE_PENDING,
+                    "WAITING_DOCTOR_EVIDENCE_REVIEW"
+            );
+            throw exception;
+        }
     }
 
     @Transactional
@@ -343,13 +431,11 @@ public class PatientPortalServiceImpl implements PatientPortalService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "医患绑定已失效，不能发布报告");
         }
 
-        record.setPublishedToPatient(true);
-        record.setPublishedAt(OffsetDateTime.now());
-        finalDiagnosisRecordMapper.save(record);
-        consultationMapper.findByDoctorIdAndSessionId(doctorId, record.getSessionId()).ifPresent(consultation -> {
-            consultation.setStatus("REPORT_PUBLISHED");
-            consultationMapper.save(consultation);
-        });
+        int published = finalDiagnosisRecordMapper.publishIfUnpublished(recordId, doctorId, OffsetDateTime.now());
+        if (published == 0) {
+            return Map.of("success", true, "message", "报告已经发布给患者", "recordId", recordId);
+        }
+        consultationMapper.transitionSessionStatus(doctorId, record.getSessionId(), "REPORT_PUBLISHED");
         return Map.of("success", true, "message", "报告已发布给患者", "recordId", recordId);
     }
 
@@ -517,6 +603,34 @@ public class PatientPortalServiceImpl implements PatientPortalService {
 
     private String explanationHistoryKey(Long patientAccountId, Long reportId) {
         return "medconsenus:patient:report-explanation:" + patientAccountId + ":" + reportId;
+    }
+
+    private <T> T withConsultationLock(Long consultationId, Supplier<T> action) {
+        RLock lock = acquireConsultationLock(consultationId);
+        try {
+            return action.get();
+        } finally {
+            releaseLock(lock);
+        }
+    }
+
+    private RLock acquireConsultationLock(Long consultationId) {
+        RLock lock = redissonClient.getLock("medconsenus:lock:consultation:" + consultationId);
+        try {
+            if (!lock.tryLock(0, TimeUnit.SECONDS)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "该问诊正在处理中，请稍后重试");
+            }
+            return lock;
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "问诊处理被中断，请稍后重试");
+        }
+    }
+
+    private void releaseLock(RLock lock) {
+        if (lock != null && lock.isHeldByCurrentThread()) {
+            lock.unlock();
+        }
     }
 
     private String defaultIfBlank(String value, String fallback) {

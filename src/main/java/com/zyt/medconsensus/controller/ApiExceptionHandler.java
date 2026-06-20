@@ -2,7 +2,9 @@ package com.zyt.medconsensus.controller;
 
 import jakarta.validation.ConstraintViolationException;
 import java.util.Map;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -61,6 +63,15 @@ public class ApiExceptionHandler {
         return Map.of(
                 "status", HttpStatus.BAD_REQUEST.value(),
                 "message", exception.getMessage()
+        );
+    }
+
+    @ExceptionHandler({ObjectOptimisticLockingFailureException.class, DataIntegrityViolationException.class})
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public Map<String, Object> handleConcurrencyConflict(RuntimeException exception) {
+        return Map.of(
+                "status", HttpStatus.CONFLICT.value(),
+                "message", "数据已被其他请求修改，请刷新后重试"
         );
     }
 

@@ -17,6 +17,7 @@ import com.zyt.medconsensus.dto.PipelineEvent;
 import com.zyt.medconsensus.dto.SessionDetailResponse;
 import com.zyt.medconsensus.entity.FinalDiagnosisRecord;
 import com.zyt.medconsensus.entity.PatientBasicInfo;
+import com.zyt.medconsensus.config.WebSocketUserNames;
 import com.zyt.medconsensus.graphkg.MedicalGraphReasoningService;
 import com.zyt.medconsensus.graphkg.MedicalGraphPath;
 import com.zyt.medconsensus.mapper.FinalDiagnosisRecordMapper;
@@ -176,8 +177,11 @@ public class MedicalWorkspaceController {
 
     @PostMapping("/doctor-review")
     public Map<String, Object> doctorReview(@Valid @RequestBody DoctorReviewRequest request, HttpSession session) {
-        FinalDiagnosisRecordDto finalRecord = collectorAgentService.saveDoctorReview(currentUserId(session), request);
-        messagingTemplate.convertAndSend("/topic/pipeline", new PipelineEvent(
+        Long userId = currentUserId(session);
+        FinalDiagnosisRecordDto finalRecord = collectorAgentService.saveDoctorReview(userId, request);
+        messagingTemplate.convertAndSendToUser(WebSocketUserNames.doctor(userId), "/queue/pipeline", new PipelineEvent(
+                userId,
+                request.getSessionId(),
                 "HUMAN_REVIEW_UPDATED",
                 "医生已提交人工复核意见",
                 100,
@@ -196,7 +200,7 @@ public class MedicalWorkspaceController {
 
     @PostMapping("/simulate")
     public DiagnosticResponse simulate(HttpSession session) {
-        currentUserId(session);
+        Long userId = currentUserId(session);
         return tracingService.traceWorkflow(
                 "MedConsenus Simulate Workflow",
                 0L,
@@ -204,15 +208,15 @@ public class MedicalWorkspaceController {
                 "simulate",
                 () -> {
                     List<PipelineEvent> events = List.of(
-                            new PipelineEvent("COLLECTOR", "信息收集 Agent 正在整理主诉与既往史", 18, LocalDateTime.now().toString()),
-                            new PipelineEvent("DIAGNOSIS", "Diagnosis Agent 基于 LangGraph + ReAct 生成初步建议", 42, LocalDateTime.now().toString()),
-                            new PipelineEvent("REVIEWERS", "Reviewer 并行评审中：GPT / Kimi / GLM", 68, LocalDateTime.now().toString()),
-                            new PipelineEvent("DECISION", "Decision Layer 正在执行投票、置信度和风险控制", 86, LocalDateTime.now().toString()),
-                            new PipelineEvent("HUMAN_REVIEW", "进入 Human-in-the-loop 医生审核", 100, LocalDateTime.now().toString())
+                            new PipelineEvent(userId, null, "COLLECTOR", "信息收集 Agent 正在整理主诉与既往史", 18, LocalDateTime.now().toString()),
+                            new PipelineEvent(userId, null, "DIAGNOSIS", "Diagnosis Agent 基于 LangGraph + ReAct 生成初步建议", 42, LocalDateTime.now().toString()),
+                            new PipelineEvent(userId, null, "REVIEWERS", "Reviewer 并行评审中：GPT / Kimi / GLM", 68, LocalDateTime.now().toString()),
+                            new PipelineEvent(userId, null, "DECISION", "Decision Layer 正在执行投票、置信度和风险控制", 86, LocalDateTime.now().toString()),
+                            new PipelineEvent(userId, null, "HUMAN_REVIEW", "进入 Human-in-the-loop 医生审核", 100, LocalDateTime.now().toString())
                     );
 
                     for (PipelineEvent event : events) {
-                        messagingTemplate.convertAndSend("/topic/pipeline", event);
+                        messagingTemplate.convertAndSendToUser(WebSocketUserNames.doctor(userId), "/queue/pipeline", event);
                     }
 
                     return demoResponse("经过多 Agent 评审后，系统建议优先排查社区获得性肺炎，并建议医生结合影像学检查进行最终确认。");

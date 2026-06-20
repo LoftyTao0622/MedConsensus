@@ -7,6 +7,7 @@ import com.zyt.medconsensus.agent.CollectorAgent;
 import com.zyt.medconsensus.agent.DiagnosisAgent;
 import com.zyt.medconsensus.agent.ReviewerAgent;
 import com.zyt.medconsensus.agent.TreatmentAgent;
+import com.zyt.medconsensus.config.WebSocketUserNames;
 import com.zyt.medconsensus.dto.ChatSessionDto;
 import com.zyt.medconsensus.dto.ConsultationRequest;
 import com.zyt.medconsensus.dto.ConsultationResponse;
@@ -43,12 +44,15 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Supplier;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DataAccessException;
 import org.bsc.langgraph4j.CompiledGraph;
 import org.bsc.langgraph4j.StateGraph;
 import org.bsc.langgraph4j.action.AsyncEdgeAction;
 import org.bsc.langgraph4j.action.AsyncNodeAction;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.springframework.data.redis.core.Cursor;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.ScanOptions;
@@ -100,6 +104,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
     private final MedicalGraphReasoningService graphReasoningService;
     private final PatientSkillService patientSkillService;
     private final ExecutorService reviewerExecutor;
+    private final RedissonClient redissonClient;
     private final CompiledGraph<DiagnosisGraphState> workflow;
 
     public CollectorAgentServiceImpl(
@@ -119,7 +124,8 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
             LangSmithTracingService tracingService,
             MedicalGraphReasoningService graphReasoningService,
             PatientSkillService patientSkillService,
-            @Qualifier("reviewerExecutor") ExecutorService reviewerExecutor
+            @Qualifier("reviewerExecutor") ExecutorService reviewerExecutor,
+            RedissonClient redissonClient
     ) {
         this.properties = properties;
         this.modelGateway = modelGateway;
@@ -138,6 +144,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         this.graphReasoningService = graphReasoningService;
         this.patientSkillService = patientSkillService;
         this.reviewerExecutor = reviewerExecutor;
+        this.redissonClient = redissonClient;
         this.workflow = compileWorkflow();
         // One normal pass already visits multiple nodes; allow room for a retry_collect round-trip.
         this.workflow.setMaxIterations(16);
@@ -158,14 +165,28 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         if (StringUtils.hasText(request.getMedicalEvidence()) && !request.isMedicalEvidenceConfirmed()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "检查资料尚未由医生确认，不能进入诊断 Agent");
         }
+        String resolvedSessionId = StringUtils.hasText(request.getSessionId())
+                ? request.getSessionId()
+                : newSessionId();
+        return withSessionLock(
+                userId,
+                resolvedSessionId,
+                () -> organizeLocked(userId, resolvedSessionId, request)
+        );
+    }
+
+    private ConsultationResponse organizeLocked(
+            Long userId,
+            String resolvedSessionId,
+            ConsultationRequest request
+    ) {
+        String userMessage = request.getMessage();
         String workflowMessage = appendMedicalEvidence(
                 userMessage.trim(),
                 request.getMedicalEvidence(),
                 request.getMedicalEvidenceFileName()
         );
 
-        String sessionId = request.getSessionId();
-        String resolvedSessionId = StringUtils.hasText(sessionId) ? sessionId : newSessionId();
         List<MessageSnapshot> history = loadMessageSnapshots(userId, resolvedSessionId);
         history.add(new MessageSnapshot("user", workflowMessage));
         saveMessageSnapshots(userId, resolvedSessionId, history);
@@ -354,7 +375,20 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
             record.setPatientRecordId(patientConsultation.getPatientRecordId());
         }
 
-        emit("TREATMENT", "Treatment Agent 正在根据医生最终诊断生成开药说明", 100);
+        return withSessionLock(
+                userId,
+                request.getSessionId(),
+                () -> saveDoctorReviewLocked(userId, request, record, patientConsultation)
+        );
+    }
+
+    private FinalDiagnosisRecordDto saveDoctorReviewLocked(
+            Long userId,
+            DoctorReviewRequest request,
+            FinalDiagnosisRecord record,
+            com.zyt.medconsensus.entity.PatientConsultation patientConsultation
+    ) {
+        emit(userId, request.getSessionId(), "TREATMENT", "Treatment Agent 正在根据医生最终诊断生成开药说明", 100);
         TreatmentAgent.TreatmentOutcome treatment = buildTreatmentAdvice(record);
         record.setTreatmentKeywords(writeJsonString(treatment.keywords()));
         record.setTreatmentSource(treatment.source());
@@ -362,8 +396,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
 
         FinalDiagnosisRecord saved = finalDiagnosisRecordMapper.save(record);
         if (patientConsultation != null) {
-            patientConsultation.setStatus("REPORT_READY");
-            patientConsultationMapper.save(patientConsultation);
+            patientConsultationMapper.transitionSessionStatus(userId, request.getSessionId(), "REPORT_READY");
         }
         upsertSession(
                 userId,
@@ -386,6 +419,13 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "缺少会话标识");
         }
 
+        withSessionLock(userId, sessionId, () -> {
+            deleteSessionLocked(userId, sessionId);
+            return null;
+        });
+    }
+
+    private void deleteSessionLocked(Long userId, String sessionId) {
         List<SessionSnapshot> sessions = new ArrayList<>(loadSessionSnapshots(userId));
         boolean removed = sessions.removeIf(session -> session.id().equals(sessionId));
         if (!removed) {
@@ -453,7 +493,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
 
     private Map<String, Object> collectNode(DiagnosisGraphState state) {
         return tracingService.traceNode(NODE_COLLECT, state, () -> {
-            emit("COLLECTOR", "信息收集/病情整理 Agent 正在归纳用户输入与会话记忆", 12);
+            emit(state, "COLLECTOR", "信息收集/病情整理 Agent 正在归纳用户输入与会话记忆", 12);
 
             String latestInput = state.userMessage();
             List<String> memory = stringListValue(state, "memory");
@@ -479,7 +519,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
 
     private Map<String, Object> assessNode(DiagnosisGraphState state) {
         return tracingService.traceNode(NODE_ASSESS, state, () -> {
-            emit("SUFFICIENCY", "正在判断当前病情信息是否足以进入初步诊断", 25);
+            emit(state, "SUFFICIENCY", "正在判断当前病情信息是否足以进入初步诊断", 25);
 
             MedicalWorkflowTools.SufficiencyResult result =
                     tools.assessInformationSufficiency(state.userMessage(), state.memory());
@@ -495,7 +535,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
 
     private Map<String, Object> askMoreInfoNode(DiagnosisGraphState state) {
         return tracingService.traceNode(NODE_ASK_MORE, state, () -> {
-            emit("COLLECTOR", "当前信息仍不充分，系统准备回到信息收集 Agent 继续追问", 40);
+            emit(state, "COLLECTOR", "当前信息仍不充分，系统准备回到信息收集 Agent 继续追问", 40);
 
             List<String> followUp = stringListValue(state, "followUpQuestions");
             List<String> missingItems = stringListValue(state, "missingItems");
@@ -530,14 +570,14 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
 
     private Map<String, Object> diagnoseNode(DiagnosisGraphState state) {
         return tracingService.traceNode(NODE_DIAGNOSE, state, () -> {
-            emit("GRAPH_RAG", "Neo4j 医学知识图谱正在执行症状→疾病→治疗/检查多跳推理", 48);
+            emit(state, "GRAPH_RAG", "Neo4j 医学知识图谱正在执行症状→疾病→治疗/检查多跳推理", 48);
 
             List<MedicalGraphPath> graphPaths = graphReasoningService.reasonBySymptoms(graphQueryTerms(state));
             List<String> graphEvidence = graphPaths.stream()
                     .map(this::formatGraphEvidence)
                     .toList();
 
-            emit("DIAGNOSIS", "Diagnosis Agent 正结合 Neo4j GraphRAG 依据生成初步诊断建议", 52);
+            emit(state, "DIAGNOSIS", "Diagnosis Agent 正结合 Neo4j GraphRAG 依据生成初步诊断建议", 52);
 
             DiagnosisAgent.DiagnosisOutcome result = diagnosisAgent.diagnose(
                     primaryDiagnosisSpec(),
@@ -642,7 +682,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
 
     private Map<String, Object> reviewNode(DiagnosisGraphState state) {
         return tracingService.traceNode(NODE_REVIEW, state, () -> {
-            emit("REVIEWERS", "Reviewer 并行评审中：GPT / Kimi / GLM 正在独立复核", 68);
+            emit(state, "REVIEWERS", "Reviewer 并行评审中：GPT / Kimi / GLM 正在独立复核", 68);
 
             CompletableFuture<Map<String, Object>> gpt = reviewerTask(
                     "GPT 5.4",
@@ -679,7 +719,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
 
     private Map<String, Object> decisionNode(DiagnosisGraphState state) {
         return tracingService.traceNode(NODE_DECIDE, state, () -> {
-            emit("DECISION", "Decision Layer 正在进行 Voting、Confidence 和 Risk Control 决策", 82);
+            emit(state, "DECISION", "Decision Layer 正在进行 Voting、Confidence 和 Risk Control 决策", 82);
 
             List<Map<String, Object>> reviewers = reviewerStateListValue(state, "reviewers");
             MedicalWorkflowTools.RiskResult risk =
@@ -714,7 +754,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
 
     private Map<String, Object> humanReviewNode(DiagnosisGraphState state) {
         return tracingService.traceNode(NODE_HUMAN, state, () -> {
-            emit("HUMAN_REVIEW", "置信度偏低或风险较高，工作流已转入人工审核环节", 94);
+            emit(state, "HUMAN_REVIEW", "置信度偏低或风险较高，工作流已转入人工审核环节", 94);
 
             return Map.of(
                     "sessionStatus", "待医生定夺",
@@ -733,7 +773,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
 
     private Map<String, Object> finalizeNode(DiagnosisGraphState state) {
         return tracingService.traceNode(NODE_FINALIZE, state, () -> {
-            emit("FINALIZE", "系统已生成初步诊断建议，等待后续医生审核或病人查看", 100);
+            emit(state, "FINALIZE", "系统已生成初步诊断建议，等待后续医生审核或病人查看", 100);
 
             return Map.of(
                     "sessionStatus", "AI 初诊已生成",
@@ -884,13 +924,38 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         return StringUtils.hasText(value) ? value : fallback;
     }
 
-    private void emit(String stage, String message, int progress) {
-        messagingTemplate.convertAndSend("/topic/pipeline", new PipelineEvent(
+    private void emit(DiagnosisGraphState state, String stage, String message, int progress) {
+        emit(state.userId(), state.sessionId(), stage, message, progress);
+    }
+
+    private void emit(Long userId, String sessionId, String stage, String message, int progress) {
+        messagingTemplate.convertAndSendToUser(WebSocketUserNames.doctor(userId), "/queue/pipeline", new PipelineEvent(
+                userId,
+                sessionId,
                 stage,
                 message,
                 progress,
                 LocalDateTime.now().toString()
         ));
+    }
+
+    private <T> T withSessionLock(Long userId, String sessionId, Supplier<T> action) {
+        RLock lock = redissonClient.getLock("medconsenus:lock:session:" + userId + ":" + sessionId);
+        boolean acquired = false;
+        try {
+            acquired = lock.tryLock(0, TimeUnit.SECONDS);
+            if (!acquired) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "该会话正在处理中，请稍后重试");
+            }
+            return action.get();
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "会话处理被中断，请稍后重试");
+        } finally {
+            if (acquired && lock.isHeldByCurrentThread()) {
+                lock.unlock();
+            }
+        }
     }
 
     @SuppressWarnings("unchecked")

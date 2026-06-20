@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, Bell, Upload, X, FileText, Image, Loader2, Trash2 } from "lucide-react";
 import { NavigationSidebar } from "./components/NavigationSidebar";
 import { SettingsTab } from "./components/SettingsTab";
@@ -118,6 +118,13 @@ function buildConsultationMessage(patient, note) {
   ].filter(Boolean);
 
   return fields.join("\n");
+}
+
+function createSessionId() {
+  const randomPart = typeof globalThis.crypto?.randomUUID === "function"
+    ? globalThis.crypto.randomUUID().replaceAll("-", "").slice(0, 12)
+    : Math.random().toString(36).slice(2, 14);
+  return `chat-${randomPart}`;
 }
 
 function parseField(text, label) {
@@ -381,6 +388,7 @@ export default function App() {
   const [consultationInput, setConsultationInput] = useState("");
   const [consultationSubmitting, setConsultationSubmitting] = useState(false);
   const [activeSessionId, setActiveSessionId] = useState(null);
+  const activeSessionIdRef = useRef(null);
   const [sessionDetail, setSessionDetail] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
@@ -476,11 +484,18 @@ export default function App() {
   }, [currentUser]);
 
   useEffect(() => {
+    activeSessionIdRef.current = activeSessionId;
+  }, [activeSessionId]);
+
+  useEffect(() => {
     if (!currentUser || currentUser.role !== "DOCTOR") {
       return undefined;
     }
 
     const disconnect = connectPipelineSocket((event) => {
+      if (event.sessionId && event.sessionId !== activeSessionIdRef.current) {
+        return;
+      }
       setPipelineEvents((current) => [...current, event]);
     });
 
@@ -601,6 +616,7 @@ export default function App() {
   }
 
   async function handleSelectSession(sessionId) {
+    activeSessionIdRef.current = sessionId;
     setActiveSessionId(sessionId);
     setFeedback("");
 
@@ -658,13 +674,20 @@ export default function App() {
 
     setConsultationSubmitting(true);
     setFeedback("");
+    const requestSessionId = activeSessionId || createSessionId();
+    const createdSession = !activeSessionId;
+    if (createdSession) {
+      activeSessionIdRef.current = requestSessionId;
+      setActiveSessionId(requestSessionId);
+      setPipelineEvents(initialEvents);
+    }
 
     try {
       const consultationNote = consultationInput.trim() || "请结合上传的检查资料进行诊断建议。";
       const confirmedEvidence = buildConfirmedEvidenceText(evidenceConfirmed);
       const response = await submitConsultation(
         buildConsultationMessage(patient, consultationNote),
-        activeSessionId,
+        requestSessionId,
         {
           ...patient,
           medicalEvidence: confirmedEvidence,
@@ -673,6 +696,7 @@ export default function App() {
         }
       );
       setActiveSessionId(response.sessionId);
+      activeSessionIdRef.current = response.sessionId;
       setConsultationInput("");
       setMedicalEvidence(null);
       setMedicalEvidenceFile(null);
@@ -697,6 +721,10 @@ export default function App() {
       setSessionDetail(detail);
       setFeedback("病情整理 Agent 已完成本轮信息收集。");
     } catch (error) {
+      if (createdSession) {
+        activeSessionIdRef.current = null;
+        setActiveSessionId(null);
+      }
       setFeedback(`病情整理失败: ${error.message}`);
     } finally {
       setConsultationSubmitting(false);

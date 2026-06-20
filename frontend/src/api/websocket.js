@@ -12,7 +12,7 @@ export function connectPipelineSocket(onMessage) {
   });
 
   client.onConnect = () => {
-    client.subscribe("/topic/pipeline", (message) => {
+    client.subscribe("/user/queue/pipeline", (message) => {
       onMessage(JSON.parse(message.body));
     });
   };

@@ -8,16 +8,28 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
+import jakarta.persistence.Version;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "patient_basic_info")
+@Table(
+        name = "patient_basic_info",
+        uniqueConstraints = @UniqueConstraint(
+                name = "uk_patient_basic_info_doctor_patient_account",
+                columnNames = {"doctor_id", "patient_account_id"}
+        )
+)
 public class PatientBasicInfo {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    @Version
+    @Column(nullable = false)
+    private Long version;
 
     @Column(name = "doctor_id")
     private Long doctorId;
@@ -67,6 +79,10 @@ public class PatientBasicInfo {
 
     public void setId(Long id) {
         this.id = id;
+    }
+
+    public Long getVersion() {
+        return version;
     }
 
     public Long getDoctorId() {

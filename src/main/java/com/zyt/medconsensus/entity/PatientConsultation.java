@@ -8,15 +8,27 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
+import jakarta.persistence.Version;
 import java.time.OffsetDateTime;
 
 @Entity
-@Table(name = "patient_consultation")
+@Table(
+        name = "patient_consultation",
+        uniqueConstraints = @UniqueConstraint(
+                name = "uk_patient_consultation_session",
+                columnNames = "session_id"
+        )
+)
 public class PatientConsultation {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    @Version
+    @Column(nullable = false)
+    private Long version;
 
     @Column(name = "patient_account_id", nullable = false)
     private Long patientAccountId;
@@ -65,6 +77,10 @@ public class PatientConsultation {
 
     public Long getId() {
         return id;
+    }
+
+    public Long getVersion() {
+        return version;
     }
 
     public Long getPatientAccountId() {
