@@ -6,6 +6,12 @@ MedConsensus is a clinician-facing medical multi-agent consensus workspace. It c
 
 [中文](README.md) · [Project guide](docs/project-guide.md) · [Deployment guide](docs/deployment.md) · [MIT License](LICENSE)
 
+[![Java 17](https://img.shields.io/badge/Java-17-007396?logo=openjdk&logoColor=white)](https://www.oracle.com/java/)
+[![Spring Boot 3.3.0](https://img.shields.io/badge/Spring%20Boot-3.3.0-6DB33F?logo=springboot&logoColor=white)](https://spring.io/projects/spring-boot)
+[![React 18.3](https://img.shields.io/badge/React-18.3-61DAFB?logo=react&logoColor=20232A)](https://react.dev/)
+[![Vite 5](https://img.shields.io/badge/Vite-5-646CFF?logo=vite&logoColor=white)](https://vite.dev/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-pgvector-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+
 ## 🧭 Choose a path
 
 | If you want to… | Start here | You will get |
