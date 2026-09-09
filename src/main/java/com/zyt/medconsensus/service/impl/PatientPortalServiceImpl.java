@@ -51,6 +51,8 @@ import org.redisson.api.RedissonClient;
 import org.springframework.http.HttpStatus;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
@@ -58,6 +60,10 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class PatientPortalServiceImpl implements PatientPortalService {
+
+    private static final Logger auditLog = LoggerFactory.getLogger("medical.session.audit");
+    private static final int MAX_EXPLANATION_MESSAGES = 40;
+    private static final java.time.Duration EXPLANATION_TTL = java.time.Duration.ofDays(7);
 
     private static final String RELATION_PENDING = "PENDING";
     private static final String RELATION_ACTIVE = "ACTIVE";
@@ -446,6 +452,7 @@ public class PatientPortalServiceImpl implements PatientPortalService {
             String message
     ) {
         ConsultationRequest request = new ConsultationRequest();
+        request.setPatientAccountId(patient.getId());
         request.setSessionId(sessionId);
         request.setMessage(message.trim());
         request.setPatientName(patient.getPatientName());
@@ -575,6 +582,7 @@ public class PatientPortalServiceImpl implements PatientPortalService {
     }
 
     private List<MessageHistoryDto> readExplanationHistory(Long patientAccountId, Long reportId) {
+        auditLog.info("session_read userId={} reportId={} resource=explanation", patientAccountId, reportId);
         String value = redisTemplate.opsForValue().get(explanationHistoryKey(patientAccountId, reportId));
         if (!StringUtils.hasText(value)) {
             return List.of();
@@ -592,10 +600,13 @@ public class PatientPortalServiceImpl implements PatientPortalService {
             List<MessageHistoryDto> history
     ) {
         try {
+            List<MessageHistoryDto> bounded = history.size() <= MAX_EXPLANATION_MESSAGES
+                    ? history : new java.util.ArrayList<>(history.subList(history.size() - MAX_EXPLANATION_MESSAGES, history.size()));
             redisTemplate.opsForValue().set(
                     explanationHistoryKey(patientAccountId, reportId),
-                    objectMapper.writeValueAsString(history)
+                    objectMapper.writeValueAsString(bounded), EXPLANATION_TTL
             );
+            auditLog.info("session_write userId={} reportId={} resource=explanation count={}", patientAccountId, reportId, bounded.size());
         } catch (JsonProcessingException exception) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "报告解释会话保存失败");
         }

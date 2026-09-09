@@ -8,6 +8,8 @@ public class ConsultationRequest {
     @Size(max = 80)
     private String sessionId;
 
+    private Long patientAccountId;
+
     @NotBlank
     @Size(max = 4000)
     private String message;
@@ -45,6 +47,10 @@ public class ConsultationRequest {
     public void setSessionId(String sessionId) {
         this.sessionId = sessionId;
     }
+
+    public Long getPatientAccountId() { return patientAccountId; }
+
+    public void setPatientAccountId(Long patientAccountId) { this.patientAccountId = patientAccountId; }
 
     public String getMessage() {
         return message;

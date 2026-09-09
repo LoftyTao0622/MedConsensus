@@ -1,10 +1,12 @@
 const PATIENT_BASE = "/api/patient";
+import { csrfHeaders } from "./csrf";
 
 async function request(path, options = {}) {
   const response = await fetch(`${PATIENT_BASE}${path}`, {
     credentials: "include",
     headers: {
       "Content-Type": "application/json",
+      ...csrfHeaders(),
       ...(options.headers || {})
     },
     ...options
@@ -23,6 +25,7 @@ export function fetchPatientDashboard() {
 export function requestDoctorBinding(inviteCode) {
   return request("/bindings", {
     method: "POST",
+    headers: csrfHeaders(),
     body: JSON.stringify({ inviteCode })
   });
 }

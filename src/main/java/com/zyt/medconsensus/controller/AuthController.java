@@ -5,6 +5,7 @@ import com.zyt.medconsensus.dto.LoginRequest;
 import com.zyt.medconsensus.dto.RegisterRequest;
 import com.zyt.medconsensus.service.DoctorService;
 import jakarta.servlet.http.HttpSession;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import java.util.Map;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -27,16 +28,18 @@ public class AuthController {
     }
 
     @PostMapping("/register")
-    public AuthResponse register(@Valid @RequestBody RegisterRequest request, HttpSession session) {
+    public AuthResponse register(@Valid @RequestBody RegisterRequest request, HttpServletRequest servletRequest, HttpSession session) {
         AuthResponse response = doctorService.register(request);
+        rotateSessionId(servletRequest);
         session.setAttribute(SESSION_USER_ID, response.id());
         session.setAttribute(SESSION_USER_ROLE, response.role());
         return response;
     }
 
     @PostMapping("/login")
-    public AuthResponse login(@Valid @RequestBody LoginRequest request, HttpSession session) {
+    public AuthResponse login(@Valid @RequestBody LoginRequest request, HttpServletRequest servletRequest, HttpSession session) {
         AuthResponse response = doctorService.login(request);
+        rotateSessionId(servletRequest);
         session.setAttribute(SESSION_USER_ID, response.id());
         session.setAttribute(SESSION_USER_ROLE, response.role());
         return response;
@@ -58,5 +61,13 @@ public class AuthController {
     public Map<String, Object> logout(HttpSession session) {
         session.invalidate();
         return Map.of("success", true, "message", "已退出登录");
+    }
+
+    private void rotateSessionId(HttpServletRequest request) {
+        try {
+            request.changeSessionId();
+        } catch (IllegalStateException ignored) {
+            // A newly-created session may not have an id to rotate yet.
+        }
     }
 }

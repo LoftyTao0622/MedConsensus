@@ -7,7 +7,6 @@ import com.zyt.medconsensus.agent.CollectorAgent;
 import com.zyt.medconsensus.agent.DiagnosisAgent;
 import com.zyt.medconsensus.agent.ReviewerAgent;
 import com.zyt.medconsensus.agent.TreatmentAgent;
-import com.zyt.medconsensus.config.WebSocketUserNames;
 import com.zyt.medconsensus.dto.ChatSessionDto;
 import com.zyt.medconsensus.dto.ConsultationRequest;
 import com.zyt.medconsensus.dto.ConsultationResponse;
@@ -15,7 +14,6 @@ import com.zyt.medconsensus.dto.DiagnosticResponse;
 import com.zyt.medconsensus.dto.DoctorReviewRequest;
 import com.zyt.medconsensus.dto.FinalDiagnosisRecordDto;
 import com.zyt.medconsensus.dto.MessageHistoryDto;
-import com.zyt.medconsensus.dto.PipelineEvent;
 import com.zyt.medconsensus.dto.SessionDetailResponse;
 import com.zyt.medconsensus.entity.DiseaseMedicine;
 import com.zyt.medconsensus.entity.FinalDiagnosisRecord;
@@ -30,6 +28,7 @@ import com.zyt.medconsensus.mapper.PatientConsultationMapper;
 import com.zyt.medconsensus.observability.LangSmithTracingService;
 import com.zyt.medconsensus.service.CollectorAgentService;
 import com.zyt.medconsensus.service.PatientSkillService;
+import com.zyt.medconsensus.service.PipelineEventPublisher;
 import com.zyt.medconsensus.tool.MedicalWorkflowTools;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -57,15 +56,23 @@ import org.springframework.data.redis.core.Cursor;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.http.HttpStatus;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class CollectorAgentServiceImpl implements CollectorAgentService {
+
+    private static final Logger auditLog = LoggerFactory.getLogger("medical.session.audit");
+    private static final int MAX_HISTORY_MESSAGES = 40;
+    private static final long HISTORY_TTL_SECONDS = 7 * 24 * 60 * 60L;
+    private static final DefaultRedisScript<Long> ATOMIC_JSON_SET = new DefaultRedisScript<>(
+            "redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2]); return 1", Long.class);
 
     private static final String NODE_COLLECT = "collect";
     private static final String NODE_ASSESS = "assess";
@@ -96,7 +103,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
     private final TreatmentAgent treatmentAgent;
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
-    private final SimpMessagingTemplate messagingTemplate;
+    private final PipelineEventPublisher pipelineEventPublisher;
     private final DiseaseMedicineMapper diseaseMedicineMapper;
     private final FinalDiagnosisRecordMapper finalDiagnosisRecordMapper;
     private final PatientConsultationMapper patientConsultationMapper;
@@ -117,7 +124,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
             TreatmentAgent treatmentAgent,
             StringRedisTemplate redisTemplate,
             ObjectMapper objectMapper,
-            SimpMessagingTemplate messagingTemplate,
+            PipelineEventPublisher pipelineEventPublisher,
             DiseaseMedicineMapper diseaseMedicineMapper,
             FinalDiagnosisRecordMapper finalDiagnosisRecordMapper,
             PatientConsultationMapper patientConsultationMapper,
@@ -136,7 +143,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         this.treatmentAgent = treatmentAgent;
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
-        this.messagingTemplate = messagingTemplate;
+        this.pipelineEventPublisher = pipelineEventPublisher;
         this.diseaseMedicineMapper = diseaseMedicineMapper;
         this.finalDiagnosisRecordMapper = finalDiagnosisRecordMapper;
         this.patientConsultationMapper = patientConsultationMapper;
@@ -929,14 +936,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
     }
 
     private void emit(Long userId, String sessionId, String stage, String message, int progress) {
-        messagingTemplate.convertAndSendToUser(WebSocketUserNames.doctor(userId), "/queue/pipeline", new PipelineEvent(
-                userId,
-                sessionId,
-                stage,
-                message,
-                progress,
-                LocalDateTime.now().toString()
-        ));
+        pipelineEventPublisher.publish(userId, sessionId, stage, message, progress);
     }
 
     private <T> T withSessionLock(Long userId, String sessionId, Supplier<T> action) {
@@ -1062,7 +1062,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         SessionSnapshot snapshot = new SessionSnapshot(sessionId, title, status, updatedAt, evidenceFileName);
         sessions.removeIf(session -> session.id().equals(sessionId));
         sessions.add(0, snapshot);
-        writeJson(sessionKey(userId), sessions);
+        writeJsonWithTtl(sessionKey(userId), sessions, HISTORY_TTL_SECONDS);
         return snapshot;
     }
 
@@ -1071,15 +1071,26 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
     }
 
     private List<MessageSnapshot> loadMessageSnapshots(Long userId, String sessionId) {
+        auditLog.info("session_read userId={} sessionId={} resource=messages", userId, sessionId);
         return readJson(memoryKey(userId, sessionId), MESSAGE_LIST_TYPE, new ArrayList<>());
     }
 
     private void saveMessageSnapshots(Long userId, String sessionId, List<MessageSnapshot> history) {
-        writeJson(memoryKey(userId, sessionId), history);
+        List<MessageSnapshot> bounded = history.size() <= MAX_HISTORY_MESSAGES
+                ? history
+                : new ArrayList<>(history.subList(history.size() - MAX_HISTORY_MESSAGES, history.size()));
+        try {
+            String json = objectMapper.writeValueAsString(bounded);
+            redisTemplate.execute(ATOMIC_JSON_SET, List.of(memoryKey(userId, sessionId)), json,
+                    String.valueOf(HISTORY_TTL_SECONDS));
+            auditLog.info("session_write userId={} sessionId={} resource=messages count={}", userId, sessionId, bounded.size());
+        } catch (JsonProcessingException exception) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Redis 会话写入失败");
+        }
     }
 
     private void saveDiagnosisSnapshot(Long userId, String sessionId, DiagnosticResponse diagnosis) {
-        writeJson(diagnosisKey(userId, sessionId), diagnosis);
+        writeJsonWithTtl(diagnosisKey(userId, sessionId), diagnosis, HISTORY_TTL_SECONDS);
     }
 
     private DiagnosticResponse loadDiagnosisSnapshot(Long userId, String sessionId) {
@@ -1110,8 +1121,17 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
     }
 
     private void writeJson(String key, Object value) {
+        writeJsonWithTtl(key, value, 0);
+    }
+
+    private void writeJsonWithTtl(String key, Object value, long ttlSeconds) {
         try {
-            redisTemplate.opsForValue().set(key, objectMapper.writeValueAsString(value));
+            String json = objectMapper.writeValueAsString(value);
+            if (ttlSeconds > 0) {
+                redisTemplate.execute(ATOMIC_JSON_SET, List.of(key), json, String.valueOf(ttlSeconds));
+            } else {
+                redisTemplate.opsForValue().set(key, json);
+            }
         } catch (JsonProcessingException exception) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Redis 会话写入失败");
         }

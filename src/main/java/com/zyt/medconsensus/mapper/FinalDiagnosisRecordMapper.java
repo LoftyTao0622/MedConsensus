@@ -5,6 +5,8 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -41,6 +43,13 @@ public interface FinalDiagnosisRecordMapper extends JpaRepository<FinalDiagnosis
     );
 
     List<FinalDiagnosisRecord> findByUserIdOrderByCreatedAtDesc(Long userId);
+
+    Page<FinalDiagnosisRecord> findByUserId(Long userId, Pageable pageable);
+
+    long countByUserId(Long userId);
+
+    @Query("select avg(record.confidence) from FinalDiagnosisRecord record where record.userId = :userId")
+    Double averageConfidenceByUserId(@Param("userId") Long userId);
 
     List<FinalDiagnosisRecord> findByPatientAccountIdAndPublishedToPatientTrueOrderByPublishedAtDesc(Long patientAccountId);
 }

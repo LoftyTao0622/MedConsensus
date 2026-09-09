@@ -12,7 +12,7 @@ spring:
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/medconsenus}
     username: ${POSTGRES_USER:postgres}
-    password: ${POSTGRES_PASSWORD:123456}
+    password: ${POSTGRES_PASSWORD}
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 20
@@ -22,7 +22,7 @@ spring:
       max-lifetime: 600000
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
 
     show-sql: false
   flyway:
@@ -103,6 +103,8 @@ spring:
 server:
   port: 8086
 app:
+  security:
+    allowed-origins: ${APP_SECURITY_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:8086}
   patient-skill:
     directory: partiality
   vector-store:
@@ -110,7 +112,7 @@ app:
       host: ${PGVECTOR_HOST:127.0.0.1}
       port: ${PGVECTOR_PORT:5432}
       user: ${PGVECTOR_USER:postgres}
-      password: ${PGVECTOR_PASSWORD:123456}
+      password: ${PGVECTOR_PASSWORD}
       database: ${PGVECTOR_DATABASE:vector_db}
       table: medical_embedding
       dimension: 1024
@@ -134,7 +136,7 @@ app:
   neo4j:
     uri: ${NEO4J_URI:bolt://localhost:7687}
     username: ${NEO4J_USER:neo4j}
-    password: ${NEO4J_PASSWORD:12345678}
+    password: ${NEO4J_PASSWORD}
     database: neo4j
   graph-import:
     batch-size: 20

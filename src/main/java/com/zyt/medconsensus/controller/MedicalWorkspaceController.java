@@ -26,6 +26,7 @@ import com.zyt.medconsensus.observability.LangSmithTracingService;
 import com.zyt.medconsensus.service.CaseImportService;
 import com.zyt.medconsensus.service.CollectorAgentService;
 import com.zyt.medconsensus.service.PatientSkillService;
+import com.zyt.medconsensus.service.MedicalFileUploadValidator;
 import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
 import java.io.IOException;
@@ -33,6 +34,8 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -62,14 +65,31 @@ public class MedicalWorkspaceController {
     private final CaseImportService caseImportService;
     private final MedicalGraphReasoningService graphReasoningService;
 
-    private static final List<String> ALLOWED_IMPORT_TYPES = List.of(
-            "application/pdf",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "image/jpeg",
-            "image/jpg",
-            "image/png"
-    );
+    private final MedicalFileUploadValidator fileUploadValidator;
 
+    public MedicalWorkspaceController(
+            SimpMessagingTemplate messagingTemplate,
+            CollectorAgentService collectorAgentService,
+            PatientBasicInfoMapper patientBasicInfoMapper,
+            FinalDiagnosisRecordMapper finalDiagnosisRecordMapper,
+            LangSmithTracingService tracingService,
+            PatientSkillService patientSkillService,
+            CaseImportService caseImportService,
+            MedicalGraphReasoningService graphReasoningService,
+            MedicalFileUploadValidator fileUploadValidator
+    ) {
+        this.messagingTemplate = messagingTemplate;
+        this.collectorAgentService = collectorAgentService;
+        this.patientBasicInfoMapper = patientBasicInfoMapper;
+        this.finalDiagnosisRecordMapper = finalDiagnosisRecordMapper;
+        this.tracingService = tracingService;
+        this.patientSkillService = patientSkillService;
+        this.caseImportService = caseImportService;
+        this.graphReasoningService = graphReasoningService;
+        this.fileUploadValidator = fileUploadValidator;
+    }
+
+    /** Backward-compatible constructor for standalone controller tests. */
     public MedicalWorkspaceController(
             SimpMessagingTemplate messagingTemplate,
             CollectorAgentService collectorAgentService,
@@ -80,20 +100,19 @@ public class MedicalWorkspaceController {
             CaseImportService caseImportService,
             MedicalGraphReasoningService graphReasoningService
     ) {
-        this.messagingTemplate = messagingTemplate;
-        this.collectorAgentService = collectorAgentService;
-        this.patientBasicInfoMapper = patientBasicInfoMapper;
-        this.finalDiagnosisRecordMapper = finalDiagnosisRecordMapper;
-        this.tracingService = tracingService;
-        this.patientSkillService = patientSkillService;
-        this.caseImportService = caseImportService;
-        this.graphReasoningService = graphReasoningService;
+        this(messagingTemplate, collectorAgentService, patientBasicInfoMapper, finalDiagnosisRecordMapper,
+                tracingService, patientSkillService, caseImportService, graphReasoningService,
+                new MedicalFileUploadValidator());
     }
 
     @GetMapping("/patients")
-    public List<PatientBasicInfoDto> patients(HttpSession session) {
+    public List<PatientBasicInfoDto> patients(@RequestParam(defaultValue = "0") int page,
+                                              @RequestParam(defaultValue = "50") int size,
+                                              HttpSession session) {
         Long doctorId = currentUserId(session);
-        return patientBasicInfoMapper.findByDoctorIdOrderByUpdateTimeDesc(doctorId).stream()
+        PageRequest request = PageRequest.of(Math.max(page, 0), Math.min(Math.max(size, 1), 100),
+                Sort.by(Sort.Direction.DESC, "updateTime"));
+        return patientBasicInfoMapper.findByDoctorId(doctorId, request).stream()
                 .map(this::toPatientDto)
                 .toList();
     }
@@ -231,7 +250,7 @@ public class MedicalWorkspaceController {
     ) throws IOException {
         Long doctorId = currentUserId(session);
 
-        validateImportFile(file);
+        fileUploadValidator.validate(file);
         return caseImportService.importCase(doctorId, file);
     }
 
@@ -241,14 +260,18 @@ public class MedicalWorkspaceController {
             HttpSession session
     ) throws IOException {
         currentUserId(session);
-        validateImportFile(file);
+        fileUploadValidator.validate(file);
         return caseImportService.analyzeMedicalEvidence(file);
     }
 
     @GetMapping("/diagnosis-records")
-    public List<FinalDiagnosisRecordDto> diagnosisRecords(HttpSession session) {
+    public List<FinalDiagnosisRecordDto> diagnosisRecords(@RequestParam(defaultValue = "0") int page,
+                                                          @RequestParam(defaultValue = "50") int size,
+                                                          HttpSession session) {
         Long doctorId = currentUserId(session);
-        return finalDiagnosisRecordMapper.findByUserIdOrderByCreatedAtDesc(doctorId).stream()
+        PageRequest request = PageRequest.of(Math.max(page, 0), Math.min(Math.max(size, 1), 100),
+                Sort.by(Sort.Direction.DESC, "createdAt"));
+        return finalDiagnosisRecordMapper.findByUserId(doctorId, request).stream()
                 .map(this::toDiagnosisRecordDto)
                 .toList();
     }
@@ -276,12 +299,8 @@ public class MedicalWorkspaceController {
         List<PatientBasicInfo> patients = patientBasicInfoMapper.findByDoctorIdOrderByUpdateTimeDesc(doctorId);
         List<ChatSessionDto> sessions = collectorAgentService.loadSessions(doctorId);
 
-        int totalDiagnoses = records.size();
-        double averageConfidence = records.stream()
-                .filter(r -> r.getConfidence() != null)
-                .mapToDouble(FinalDiagnosisRecord::getConfidence)
-                .average()
-                .orElse(0.0);
+        int totalDiagnoses = Math.toIntExact(finalDiagnosisRecordMapper.countByUserId(doctorId));
+        double averageConfidence = java.util.Optional.ofNullable(finalDiagnosisRecordMapper.averageConfidenceByUserId(doctorId)).orElse(0.0);
 
         long aiAdopted = records.stream()
                 .filter(r -> r.getDoctorOpinion() == null || r.getDoctorOpinion().isBlank())
@@ -307,7 +326,7 @@ public class MedicalWorkspaceController {
                 Math.round(aiAdoptionRate * 100.0) / 100.0,
                 riskDistribution,
                 sessions.size(),
-                patients.size(),
+                Math.toIntExact(patientBasicInfoMapper.countByDoctorId(doctorId)),
                 Math.round(diagnosisConsistency * 100.0) / 100.0
         );
     }
@@ -379,24 +398,13 @@ public class MedicalWorkspaceController {
     private Long currentUserId(HttpSession session) {
         Object userId = session.getAttribute(SESSION_USER_ID);
         Object role = session.getAttribute(SESSION_USER_ROLE);
-        if (userId instanceof Long value) {
-            if ("PATIENT".equals(role)) {
-                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "当前账号不是医生");
-            }
+        if (userId instanceof Long value && "DOCTOR".equals(role)) {
             return value;
         }
+        if (userId instanceof Long) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "当前账号不是医生");
+        }
         throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "当前未登录");
-    }
-
-    private void validateImportFile(MultipartFile file) {
-        String contentType = file.getContentType();
-        if (contentType == null || !ALLOWED_IMPORT_TYPES.contains(contentType.toLowerCase())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "不支持的文件格式，请上传 PDF、DOCX 或 JPG/PNG 图片");
-        }
-
-        if (file.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "上传文件不能为空");
-        }
     }
 
     private void applyPatientRequest(PatientBasicInfo patient, PatientBasicInfoRequest request) {

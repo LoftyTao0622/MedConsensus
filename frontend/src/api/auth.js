@@ -1,10 +1,12 @@
 const AUTH_BASE = "/api/auth";
+import { csrfHeaders } from "./csrf";
 
 async function request(path, options = {}) {
   const response = await fetch(`${AUTH_BASE}${path}`, {
     credentials: "include",
     headers: {
       "Content-Type": "application/json",
+      ...csrfHeaders(),
       ...(options.headers || {})
     },
     ...options

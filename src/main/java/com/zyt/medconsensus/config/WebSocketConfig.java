@@ -4,6 +4,7 @@ import jakarta.servlet.http.HttpSession;
 import java.security.Principal;
 import java.util.Map;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.server.ServerHttpRequest;
 import org.springframework.http.server.ServerHttpResponse;
 import org.springframework.http.server.ServletServerHttpRequest;
@@ -19,6 +20,9 @@ import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerCo
 @EnableWebSocketMessageBroker
 public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
+    @Value("${app.security.allowed-origins:http://localhost:5173,http://localhost:8086}")
+    private String allowedOrigins;
+
     private static final String SESSION_USER_ID = "CURRENT_USER_ID";
     private static final String SESSION_USER_ROLE = "CURRENT_USER_ROLE";
 
@@ -27,7 +31,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         registry.addEndpoint("/ws/diagnosis")
                 .addInterceptors(new AuthenticatedSessionHandshakeInterceptor())
                 .setHandshakeHandler(new SessionUserHandshakeHandler())
-                .setAllowedOriginPatterns("*");
+                .setAllowedOriginPatterns(allowedOrigins.split(","));
     }
 
     @Override

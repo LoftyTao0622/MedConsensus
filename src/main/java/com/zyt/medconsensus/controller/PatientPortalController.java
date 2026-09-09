@@ -10,6 +10,7 @@ import com.zyt.medconsensus.dto.PatientDashboardResponse;
 import com.zyt.medconsensus.dto.PatientExplanationChatDto;
 import com.zyt.medconsensus.dto.PatientMessageRequest;
 import com.zyt.medconsensus.service.PatientPortalService;
+import com.zyt.medconsensus.service.MedicalFileUploadValidator;
 import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
 import java.io.IOException;
@@ -41,9 +42,15 @@ public class PatientPortalController {
     );
 
     private final PatientPortalService patientPortalService;
+    private final MedicalFileUploadValidator fileUploadValidator;
 
     public PatientPortalController(PatientPortalService patientPortalService) {
+        this(patientPortalService, new MedicalFileUploadValidator());
+    }
+
+    public PatientPortalController(PatientPortalService patientPortalService, MedicalFileUploadValidator fileUploadValidator) {
         this.patientPortalService = patientPortalService;
+        this.fileUploadValidator = fileUploadValidator;
     }
 
     @GetMapping("/patient/dashboard")
@@ -82,7 +89,7 @@ public class PatientPortalController {
             @RequestParam("file") MultipartFile file,
             HttpSession session
     ) throws IOException {
-        validateImportFile(file);
+        fileUploadValidator.validate(file);
         return patientPortalService.uploadEvidence(currentPatientId(session), consultationId, file);
     }
 
@@ -156,13 +163,4 @@ public class PatientPortalController {
         return value;
     }
 
-    private void validateImportFile(MultipartFile file) {
-        if (file == null || file.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "上传文件不能为空");
-        }
-        String contentType = file.getContentType();
-        if (contentType == null || !ALLOWED_IMPORT_TYPES.contains(contentType.toLowerCase())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "不支持的文件格式，请上传 PDF、DOCX 或 JPG/PNG 图片");
-        }
-    }
 }

@@ -11,9 +11,15 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(ApiExceptionHandler.class);
 
     @ExceptionHandler(ResponseStatusException.class)
     @ResponseStatus
@@ -21,7 +27,8 @@ public class ApiExceptionHandler {
         HttpStatus status = HttpStatus.valueOf(exception.getStatusCode().value());
         return Map.of(
                 "status", status.value(),
-                "message", exception.getReason() == null ? status.getReasonPhrase() : exception.getReason()
+                "message", status.is5xxServerError() ? "服务暂时不可用，请稍后重试"
+                        : (exception.getReason() == null ? status.getReasonPhrase() : exception.getReason())
         );
     }
 
@@ -44,7 +51,7 @@ public class ApiExceptionHandler {
     public Map<String, Object> handleConstraintViolationException(ConstraintViolationException exception) {
         return Map.of(
                 "status", HttpStatus.BAD_REQUEST.value(),
-                "message", exception.getMessage()
+                "message", "请求参数不合法"
         );
     }
 
@@ -62,7 +69,7 @@ public class ApiExceptionHandler {
     public Map<String, Object> handleIllegalArgumentException(IllegalArgumentException exception) {
         return Map.of(
                 "status", HttpStatus.BAD_REQUEST.value(),
-                "message", exception.getMessage()
+                "message", "请求参数不合法"
         );
     }
 
@@ -78,9 +85,22 @@ public class ApiExceptionHandler {
     @ExceptionHandler(RuntimeException.class)
     @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
     public Map<String, Object> handleRuntimeException(RuntimeException exception) {
+        log.error("Unhandled API exception", exception);
         return Map.of(
                 "status", HttpStatus.INTERNAL_SERVER_ERROR.value(),
-                "message", exception.getMessage() == null ? "服务暂时不可用，请稍后重试" : exception.getMessage()
+                "message", "服务暂时不可用，请稍后重试"
         );
+    }
+
+    @ExceptionHandler(AuthenticationException.class)
+    @ResponseStatus(HttpStatus.UNAUTHORIZED)
+    public Map<String, Object> handleAuthenticationException(AuthenticationException exception) {
+        return Map.of("status", HttpStatus.UNAUTHORIZED.value(), "message", "请先登录");
+    }
+
+    @ExceptionHandler(AccessDeniedException.class)
+    @ResponseStatus(HttpStatus.FORBIDDEN)
+    public Map<String, Object> handleAccessDeniedException(AccessDeniedException exception) {
+        return Map.of("status", HttpStatus.FORBIDDEN.value(), "message", "无权访问该资源");
     }
 }

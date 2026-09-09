@@ -192,12 +192,11 @@ docker/postgres/init/01-init.sql
 初始化内容：
 
 - 创建 `vector_db` 数据库。
-- 启用 pgvector 扩展。
-- 创建 `medical_embedding` 向量表。
-- 创建 `doctor_basic_info`、`patient_basic_info`、`disease_medicine` 等业务表。
-- 写入少量疾病-药品示例数据。
+- 启用 pgvector 扩展并创建 `medical_embedding` 向量表。
 
-应用启动时还会通过 JPA `ddl-auto: update` 维护实体对应表，例如 `final_diagnosis_record`。
+业务库表结构和索引全部由应用启动时的 Flyway 迁移管理，不再依赖 Hibernate 自动建表。
+
+应用启动时通过 Flyway 迁移维护实体对应表和索引，Hibernate 仅执行 Schema 校验。
 
 注意：初始化 SQL 只会在 PostgreSQL 数据目录为空时执行。数据库已经启动过后，修改初始化 SQL 不会自动重放。
 

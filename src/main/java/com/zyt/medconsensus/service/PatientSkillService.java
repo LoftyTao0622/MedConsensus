@@ -37,13 +37,18 @@ public class PatientSkillService {
             return "";
         }
 
-        Path path = skillPath(patientName);
+        Path path = skillPath(request.getPatientAccountId(), patientName);
         if (!Files.exists(path)) {
             return "";
         }
 
         try {
             String content = Files.readString(path, StandardCharsets.UTF_8);
+            if (request.getPatientAccountId() != null
+                    && content.contains("Patient Account ID:")
+                    && !content.contains("Patient Account ID: " + request.getPatientAccountId())) {
+                return "";
+            }
             if (content.length() <= MAX_SKILL_CHARS) {
                 return content;
             }
@@ -87,7 +92,7 @@ public class PatientSkillService {
         lock.lock();
         try {
             Files.createDirectories(skillDirectory);
-            Path path = skillPath(request.getPatientName());
+            Path path = skillPath(request.getPatientAccountId(), request.getPatientName());
             if (!Files.exists(path)) {
                 Files.writeString(path, initialSkillDocument(request), StandardCharsets.UTF_8);
             }
@@ -101,7 +106,14 @@ public class PatientSkillService {
     }
 
     public Path skillPath(String patientName) {
-        return skillDirectory.resolve(toEnglishFileName(patientName) + ".md").normalize();
+        return skillPath(null, patientName);
+    }
+
+    public Path skillPath(Long patientAccountId, String patientName) {
+        String key = patientAccountId != null
+                ? "patient-account-" + patientAccountId
+                : "patient-name-" + toEnglishFileName(patientName);
+        return skillDirectory.resolve(key + ".md").normalize();
     }
 
     public void recordPatientProfile(PatientBasicInfo patient, boolean created) {
@@ -112,7 +124,7 @@ public class PatientSkillService {
         lock.lock();
         try {
             Files.createDirectories(skillDirectory);
-            Path path = skillPath(patient.getPatientName());
+            Path path = skillPath(patient.getPatientAccountId(), patient.getPatientName());
             if (!Files.exists(path)) {
                 Files.writeString(path, initialSkillDocument(patient), StandardCharsets.UTF_8);
             }
@@ -182,6 +194,9 @@ public class PatientSkillService {
                 .append(created ? " - Patient profile created" : " - Patient profile updated")
                 .append("\n\n");
         builder.append("- Patient ID: ").append(patient.getId() == null ? "unknown" : patient.getId()).append("\n");
+        if (patient.getPatientAccountId() != null) {
+            builder.append("- Patient Account ID: ").append(patient.getPatientAccountId()).append("\n");
+        }
         builder.append("- Doctor/User ID: ").append(patient.getDoctorId() == null ? "unknown" : patient.getDoctorId()).append("\n");
         addLine(builder, "Name", patient.getPatientName());
         addLine(builder, "Gender", patient.getGender());

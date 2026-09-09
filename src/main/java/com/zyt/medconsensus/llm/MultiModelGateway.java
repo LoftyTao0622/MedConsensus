@@ -11,10 +11,15 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestClient;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Component
 
 public class MultiModelGateway {
+
+    private static final Logger log = LoggerFactory.getLogger(MultiModelGateway.class);
 
     private final ObjectMapper objectMapper;
     private final LangSmithTracingService tracingService;
@@ -28,7 +33,7 @@ public class MultiModelGateway {
 
     public String chat(ModelSpec spec, String systemPrompt, List<Map<String, String>> messages) {
         if (spec == null || !spec.isConfigured()) {
-            return "";
+            throw new ModelGatewayException("模型未配置");
         }
 
         RestClient client = getOrCreateClient(spec);
@@ -55,17 +60,18 @@ public class MultiModelGateway {
                         .body(String.class);
 
                 if (!StringUtils.hasText(response)) {
-                    return "";
+                    throw new ModelGatewayException("模型返回空响应");
                 }
 
                 JsonNode root = objectMapper.readTree(response);
                 JsonNode message = root.path("choices").path(0).path("message");
                 String content = message.path("content").asText("");
                 return StringUtils.hasText(content) ? content : message.path("MedContent").asText("");
+            } catch (ModelGatewayException exception) {
+                throw exception;
             } catch (Exception exception) {
-                System.err.println("[MultiModelGateway] chat error for model " + spec.model() + ": " + exception.getMessage());
-                exception.printStackTrace();
-                return "";
+                log.error("Model call failed model={} baseUrl={}", spec.model(), spec.baseUrl(), exception);
+                throw new ModelGatewayException("模型调用失败，请稍后重试", exception);
             }
         });
     }
@@ -77,7 +83,7 @@ public class MultiModelGateway {
      */
     public String chatVision(ModelSpec spec, String systemPrompt, List<Map<String, Object>> contentParts) {
         if (spec == null || !spec.isConfigured()) {
-            return "";
+            throw new ModelGatewayException("模型未配置");
         }
 
         RestClient client = getOrCreateClient(spec);
@@ -102,17 +108,18 @@ public class MultiModelGateway {
                         .body(String.class);
 
                 if (!StringUtils.hasText(response)) {
-                    return "";
+                    throw new ModelGatewayException("模型返回空响应");
                 }
 
                 JsonNode root = objectMapper.readTree(response);
                 JsonNode message = root.path("choices").path(0).path("message");
                 String content = message.path("content").asText("");
                 return StringUtils.hasText(content) ? content : message.path("MedContent").asText("");
+            } catch (ModelGatewayException exception) {
+                throw exception;
             } catch (Exception exception) {
-                System.err.println("[MultiModelGateway] chatVision error for model " + spec.model() + ": " + exception.getMessage());
-                exception.printStackTrace();
-                return "";
+                log.error("Vision model call failed model={} baseUrl={}", spec.model(), spec.baseUrl(), exception);
+                throw new ModelGatewayException("视觉模型调用失败，请稍后重试", exception);
             }
         });
     }
@@ -122,10 +129,23 @@ public class MultiModelGateway {
         return clientCache.computeIfAbsent(cacheKey, key ->
                 RestClient.builder()
                         .baseUrl(spec.baseUrl())
+                        .requestFactory(requestFactory())
                         .defaultHeader("Authorization", "Bearer " + spec.apiKey())
                         .defaultHeader("Content-Type", MediaType.APPLICATION_JSON_VALUE)
                         .build()
         );
+    }
+
+    private SimpleClientHttpRequestFactory requestFactory() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(java.time.Duration.ofSeconds(10));
+        factory.setReadTimeout(java.time.Duration.ofSeconds(60));
+        return factory;
+    }
+
+    public static class ModelGatewayException extends RuntimeException {
+        public ModelGatewayException(String message) { super(message); }
+        public ModelGatewayException(String message, Throwable cause) { super(message, cause); }
     }
 
     private Map<String, Object> toOpenAiMessage(Map<String, String> message) {

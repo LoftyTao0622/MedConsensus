@@ -1,10 +1,12 @@
 const API_BASE = "/api/workspace";
+import { csrfHeaders } from "./csrf";
 
 async function request(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
     credentials: "include",
     headers: {
       "Content-Type": "application/json",
+      ...csrfHeaders(),
       ...(options.headers || {})
     },
     ...options
@@ -23,6 +25,7 @@ async function uploadRequest(path, formData) {
   const response = await fetch(`${API_BASE}${path}`, {
     credentials: "include",
     method: "POST",
+    headers: csrfHeaders(),
     body: formData
   });
 

@@ -18,6 +18,7 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -142,17 +143,17 @@ public class CaseImportService {
     }
 
     private JsonNode analyzeFile(MultipartFile file) throws IOException {
-        String contentType = file.getContentType();
+        String extension = fileExtension(file.getOriginalFilename());
         String llmResponse;
 
-        if (isImageType(contentType)) {
+        if (Set.of("jpg", "jpeg", "png").contains(extension)) {
             llmResponse = processImage(file);
-        } else if (isPdfType(contentType)) {
+        } else if ("pdf".equals(extension)) {
             llmResponse = processPdf(file);
-        } else if (isDocxType(contentType)) {
+        } else if ("docx".equals(extension)) {
             llmResponse = processDocx(file);
         } else {
-            throw new IllegalArgumentException("不支持的文件格式: " + contentType);
+            throw new IllegalArgumentException("不支持的文件格式");
         }
 
         if (!StringUtils.hasText(llmResponse)) {
@@ -165,7 +166,7 @@ public class CaseImportService {
     private String processImage(MultipartFile file) throws IOException {
         try (InputStream is = file.getInputStream()) {
             String base64 = documentParsingService.encodeFileToBase64(is);
-            String mimeType = StringUtils.hasText(file.getContentType()) ? file.getContentType() : "image/jpeg";
+            String mimeType = "png".equals(fileExtension(file.getOriginalFilename())) ? "image/png" : "image/jpeg";
             String dataUrl = "data:" + mimeType + ";base64," + base64;
             return callVisionWithImages("", List.of(dataUrl));
         }
@@ -247,16 +248,11 @@ public class CaseImportService {
         );
     }
 
-    private boolean isImageType(String contentType) {
-        return contentType != null && (contentType.startsWith("image/"));
-    }
-
-    private boolean isPdfType(String contentType) {
-        return "application/pdf".equals(contentType);
-    }
-
-    private boolean isDocxType(String contentType) {
-        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document".equals(contentType);
+    private String fileExtension(String filename) {
+        if (filename == null) return "";
+        String clean = filename.replace('\\', '/');
+        int dot = clean.lastIndexOf('.');
+        return dot >= 0 ? clean.substring(dot + 1).toLowerCase(java.util.Locale.ROOT) : "";
     }
 
     private PatientBasicInfo createPatient(Long doctorId, JsonNode result) {
