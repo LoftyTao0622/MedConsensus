@@ -1,4 +1,10 @@
 import { BadgeCheck, CheckCircle2, ClipboardCopy, FileCheck2, Link2, Users } from "lucide-react";
+import { useState } from "react";
+import { useFollowUps } from "../api/followUp";
+import { queueFilters, selectQueue, waitingTime } from "../doctorQueue";
+import { EvidenceCorrection, SessionEvidence } from "./EvidenceSource";
+import { PublishReportForm, ReportFollowUp } from "./ReportFollowUp";
+import "./followUp.css";
 
 const consultationStatusCopy = {
   NEEDS_PATIENT_REPLY: "等待患者补充",
@@ -9,8 +15,22 @@ const consultationStatusCopy = {
   REPORT_PUBLISHED: "报告已发布"
 };
 
+function PendingEvidence({consultation, onConfirm, busy}) {
+  const [dirty, setDirty] = useState(false);
+  return <div className="pending-evidence-block">
+    <div>
+      <span>患者上传：{consultation.evidenceFileName}</span>
+      <EvidenceCorrection sourceId={consultation.evidenceSourceId} initialText={consultation.evidenceText} onDirtyChange={setDirty} />
+    </div>
+    <button className="primary-button" type="button" disabled={busy || dirty} onClick={() => onConfirm(consultation.id)}>
+      {busy ? "确认中" : "确认资料并继续诊断"}
+    </button>
+  </div>;
+}
+
 export function DoctorCollaborationPanel({
   collaboration,
+  onRefresh,
   diagnosisRecords,
   busyAction,
   feedback,
@@ -21,6 +41,19 @@ export function DoctorCollaborationPanel({
 }) {
   const pendingRelations = collaboration?.relations?.filter((item) => item.status === "PENDING") || [];
   const consultations = collaboration?.consultations || [];
+  const [filter, setFilter] = useState("active");
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState("");
+  const followUps = useFollowUps("workspace", collaboration);
+  const queue = selectQueue(consultations, followUps.tasks, filter);
+
+  async function refresh() {
+    setRefreshing(true);
+    setRefreshError("");
+    try { await onRefresh(); }
+    catch (error) { setRefreshError(error.message); }
+    finally { setRefreshing(false); }
+  }
 
   function copyInviteCode() {
     navigator.clipboard?.writeText(collaboration?.inviteCode || "");
@@ -82,17 +115,29 @@ export function DoctorCollaborationPanel({
         <section>
           <div className="collaboration-heading">
             <FileCheck2 size={18} />
-            <h3>患者问诊任务</h3>
-            <span>{consultations.length}</span>
+            <h3>问诊待办</h3>
+            <span>{queue.length}</span>
+            <button type="button" className="secondary-button" disabled={refreshing} onClick={refresh}>
+              {refreshing ? "刷新中" : "刷新待办"}
+            </button>
           </div>
+          {refreshError && <p role="alert">{refreshError}</p>}
+          <label className="queue-filter">查看
+            <select value={filter} onChange={event => setFilter(event.target.value)}>
+              {Object.entries(queueFilters).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
+          </label>
+          {followUps.error && <p role="alert">{followUps.error} <button type="button" onClick={followUps.refresh}>重试</button></p>}
           <div className="collaboration-list">
-            {consultations.length ? consultations.map((consultation) => {
-              const record = diagnosisRecords.find((item) => item.sessionId === consultation.sessionId);
+            {queue.length ? queue.map(({item: consultation, since}) => {
+              const record = consultation.reportId ? {id: consultation.reportId, publishedToPatient: consultation.reportPublished}
+                : diagnosisRecords.find((item) => item.sessionId === consultation.sessionId);
               return (
                 <article className="collaboration-task" key={consultation.id}>
                   <div className="collaboration-task-header">
                     <div>
                       <strong>{consultation.patientName}</strong>
+                      {since != null && <small> · 已等待 {waitingTime(since)}</small>}
                       <p>
                         {consultation.patientPhone || "未填写手机号"} · {consultationStatusCopy[consultation.status] || "处理中"}
                       </p>
@@ -102,22 +147,10 @@ export function DoctorCollaborationPanel({
                     </button>
                   </div>
 
-                  {consultation.evidenceStatus === "PENDING_DOCTOR" ? (
-                    <div className="pending-evidence-block">
-                      <div>
-                        <span>患者上传：{consultation.evidenceFileName}</span>
-                        <p>{consultation.evidenceText || "资料已完成识别，请确认后进入诊断 Agent。"}</p>
-                      </div>
-                      <button
-                        className="primary-button"
-                        type="button"
-                        onClick={() => onConfirmEvidence(consultation.id)}
-                        disabled={busyAction === `evidence-${consultation.id}`}
-                      >
-                        {busyAction === `evidence-${consultation.id}` ? "确认中" : "确认资料并继续诊断"}
-                      </button>
-                    </div>
-                  ) : null}
+                  {consultation.evidenceFileName && <SessionEvidence sessionId={consultation.sessionId} />}
+                  {consultation.evidenceStatus === "PENDING_DOCTOR" &&
+                    <PendingEvidence key={consultation.evidenceSourceId || consultation.id} consultation={consultation}
+                      onConfirm={onConfirmEvidence} busy={busyAction === `evidence-${consultation.id}`} />}
 
                   {record ? (
                     <div className="publish-report-row">
@@ -126,20 +159,15 @@ export function DoctorCollaborationPanel({
                         <span>{record.publishedToPatient ? "报告已发布给患者" : "医生复核已完成，报告尚未发布"}</span>
                       </div>
                       {!record.publishedToPatient ? (
-                        <button
-                          className="primary-button"
-                          type="button"
-                          onClick={() => onPublishReport(record.id)}
-                          disabled={busyAction === `publish-${record.id}`}
-                        >
-                          {busyAction === `publish-${record.id}` ? "发布中" : "发布给患者"}
-                        </button>
+                        <PublishReportForm onPublish={plan => onPublishReport(record.id, plan)} busy={busyAction === `publish-${record.id}`} />
                       ) : null}
                     </div>
                   ) : null}
+                  {followUps.tasks.filter(task => task.recordId === record?.id).map(task =>
+                    <ReportFollowUp key={task.id} task={task} onChange={followUps.refresh} />)}
                 </article>
               );
-            }) : <p className="treatment-empty">暂无患者端发起的问诊。</p>}
+            }) : <p className="treatment-empty">当前没有{queueFilters[filter]}记录。</p>}
           </div>
         </section>
       </div>

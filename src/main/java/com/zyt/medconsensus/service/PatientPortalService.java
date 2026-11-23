@@ -11,6 +11,8 @@ import com.zyt.medconsensus.dto.PatientExplanationChatDto;
 import com.zyt.medconsensus.dto.PatientMessageRequest;
 import java.io.IOException;
 import java.util.Map;
+import java.util.List;
+import com.zyt.medconsensus.dto.ReportRevisionDto;
 import org.springframework.web.multipart.MultipartFile;
 
 public interface PatientPortalService {
@@ -42,6 +44,10 @@ public interface PatientPortalService {
     DoctorPatientRelationDto approveBinding(Long doctorId, Long relationId);
 
     PatientConsultationDto confirmEvidence(Long doctorId, Long consultationId);
+
+    List<ReportRevisionDto> doctorReportRevisions(Long doctorId, Long recordId);
+
+    List<ReportRevisionDto> patientReportRevisions(Long patientId, Long recordId);
 
     Map<String, Object> publishReport(Long doctorId, Long recordId);
 }

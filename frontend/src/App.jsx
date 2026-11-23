@@ -5,6 +5,8 @@ import { SettingsTab } from "./components/SettingsTab";
 import { Sidebar } from "./components/Sidebar";
 import { DiagnosticPanel } from "./components/DiagnosticPanel";
 import { DoctorPanel } from "./components/DoctorPanel";
+import { SocialCallbackPanel } from "./components/SocialLogin";
+import { readSocialCallback } from "./socialLogin";
 import { AuthPanel } from "./components/AuthPanel";
 import { DoctorProfileTab } from "./components/DoctorProfileTab";
 import { EvidenceReviewPanel } from "./components/EvidenceReviewPanel";
@@ -16,8 +18,8 @@ import {
   deletePatient,
   deleteDiagnosisRecord,
   deleteSession,
-  fetchDiagnosis,
   fetchPatients,
+  fetchPatient,
   fetchSessionDetail,
   fetchSessions,
   updatePatient,
@@ -32,6 +34,11 @@ import {
   confirmPatientEvidence,
   publishDiagnosisRecord
 } from "./api/workspace";
+import { ReportVersions } from "./components/ReportVersions";
+import { ReviewerResults } from "./components/ReviewerResults";
+import { SessionEvidence } from "./components/EvidenceSource";
+import { buildDiagnosisReportHtml, reportFileLabel, isReviewedRecord, escapeHtml } from "./reportExport";
+import { draftKey, emptyDraft, updateDraft } from "./consultationDraft";
 import { connectPipelineSocket } from "./api/websocket";
 
 const initialEvents = [
@@ -47,9 +54,9 @@ const REMINDER_STORAGE_KEY = "medconsensus-doctor-reminders";
 const CARE_MODE_STORAGE_KEY = "medconsensus-care-mode";
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
-function readStoredReminders() {
+function readStoredReminders(key) {
   try {
-    const parsed = JSON.parse(localStorage.getItem(REMINDER_STORAGE_KEY) || "[]");
+    const parsed = JSON.parse(localStorage.getItem(key) || "[]");
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
@@ -137,7 +144,7 @@ function patientFromSessionDetail(detail) {
   return {
     ...emptyPatient,
     loginStatus: "患者信息已载入",
-    name: parseField(firstUserMessage, "患者姓名") || detail?.title || "",
+    name: parseField(firstUserMessage, "患者姓名"),
     age: parseField(firstUserMessage, "年龄").replace(/岁$/, ""),
     weight: parseField(firstUserMessage, "体重").replace(/kg$/i, ""),
     phone: parseField(firstUserMessage, "患者电话"),
@@ -148,22 +155,6 @@ function patientFromSessionDetail(detail) {
       detail?.title ||
       ""
   };
-}
-
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-function listHtml(items) {
-  if (!items?.length) {
-    return "<p>未记录</p>";
-  }
-  return `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
 }
 
 function safeFileName(value) {
@@ -179,93 +170,12 @@ function formatFileSize(bytes) {
     : `${(bytes / 1024).toFixed(1)} KB`;
 }
 
-function buildDiagnosisReportHtml({ patient, diagnosis, opinion, finalRecord, doctorName }) {
-  const doctorOpinion = finalRecord?.doctorOpinion || opinion || "医生确认 AI 结论，无额外修正。";
-  const finalConclusion = finalRecord?.finalConclusion || doctorOpinion || diagnosis?.conclusion || "未形成最终结论";
-  const generatedAt = new Date().toLocaleString("zh-CN");
-
-  return `<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8" />
-  <title>诊断报告-${escapeHtml(patient?.name || "未命名患者")}</title>
-  <style>
-    body { margin: 0; padding: 32px; color: #102f49; font-family: "Microsoft YaHei", "Noto Sans SC", sans-serif; background: #f4f8fc; }
-    .report { max-width: 920px; margin: 0 auto; padding: 36px; border-radius: 20px; background: #fff; box-shadow: 0 18px 50px rgba(16, 47, 73, 0.12); }
-    .header { display: flex; justify-content: space-between; gap: 20px; border-bottom: 2px solid #d9e8f5; padding-bottom: 18px; margin-bottom: 24px; }
-    h1 { margin: 0 0 8px; font-size: 28px; }
-    h2 { margin: 26px 0 12px; font-size: 20px; color: #0f4e82; }
-    p { line-height: 1.8; margin: 0; }
-    ul { margin: 0; padding-left: 22px; }
-    li { line-height: 1.8; margin: 4px 0; }
-    .meta { color: #5b7590; font-size: 13px; line-height: 1.7; text-align: right; }
-    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-    .field { padding: 14px 16px; border: 1px solid #d9e8f5; border-radius: 14px; background: #f8fbfe; }
-    .field span { display: block; margin-bottom: 6px; color: #5b7590; font-size: 12px; font-weight: 700; }
-    .block { padding: 16px; border: 1px solid #d9e8f5; border-radius: 14px; background: #fbfdff; }
-    .conclusion { border-color: #9bc9ee; background: #eef7ff; font-weight: 700; }
-    .actions { position: sticky; top: 0; display: flex; justify-content: flex-end; margin: -16px -16px 18px 0; }
-    button { border: 0; border-radius: 12px; padding: 10px 16px; color: #fff; background: #1d71b8; font-weight: 700; cursor: pointer; }
-    @media print {
-      body { padding: 0; background: #fff; }
-      .report { max-width: none; box-shadow: none; border-radius: 0; }
-      .actions { display: none; }
-    }
-  </style>
-</head>
-<body>
-  <main class="report">
-    <div class="actions"><button onclick="window.print()">打印报告</button></div>
-    <section class="header">
-      <div>
-        <h1>智能辅助诊断报告</h1>
-        <p>本报告由医生结合 AI 辅助诊断结果审核生成，最终诊断以医生意见为准。</p>
-      </div>
-      <div class="meta">
-        生成时间：${escapeHtml(generatedAt)}<br />
-        诊断医生：${escapeHtml(doctorName || "未记录")}<br />
-        会话编号：${escapeHtml(finalRecord?.sessionId || "未记录")}
-      </div>
-    </section>
-
-    <h2>一、患者基本信息</h2>
-    <section class="grid">
-      <div class="field"><span>患者姓名</span>${escapeHtml(patient?.name || "未填写")}</div>
-      <div class="field"><span>患者电话</span>${escapeHtml(patient?.phone || "未填写")}</div>
-      <div class="field"><span>年龄</span>${escapeHtml(patient?.age || "未填写")} ${patient?.age ? "岁" : ""}</div>
-      <div class="field"><span>体重</span>${escapeHtml(patient?.weight || "未填写")} ${patient?.weight ? "kg" : ""}</div>
-      <div class="field"><span>性别</span>${escapeHtml(patient?.gender || "未填写")}</div>
-      <div class="field"><span>风险等级</span>${escapeHtml(diagnosis?.riskLevel || finalRecord?.riskLevel || "待评估")}</div>
-    </section>
-
-    <h2>二、主诉</h2>
-    <section class="block"><p>${escapeHtml(patient?.chiefComplaint || finalRecord?.chiefComplaint || "未记录")}</p></section>
-
-    <h2>三、AI 辅助诊断结果</h2>
-    <section class="block">
-      <p>${escapeHtml(diagnosis?.conclusion || finalRecord?.aiConclusion || "未生成")}</p>
-      <p>AI 置信度：${Math.round((diagnosis?.confidence || finalRecord?.confidence || 0) * 100)}%</p>
-    </section>
-
-    <h2>四、诊断依据</h2>
-    <section class="block">${listHtml(diagnosis?.structuredAnalysis)}</section>
-
-    <h2>五、医生意见</h2>
-    <section class="block"><p>${escapeHtml(doctorOpinion)}</p></section>
-
-    <h2>六、最终诊断结果</h2>
-    <section class="block conclusion"><p>${escapeHtml(finalConclusion)}</p></section>
-  </main>
-</body>
-</html>`;
-}
-
-function downloadDiagnosisReport(reportHtml, patientName) {
+function downloadDiagnosisReport(reportHtml, patientName, record) {
   const blob = new Blob([reportHtml], { type: "text/html;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `诊断报告-${safeFileName(patientName)}.html`;
+  link.download = `${reportFileLabel(record)}-${safeFileName(patientName)}.html`;
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -376,25 +286,92 @@ function downloadPrescription(prescriptionHtml, patientName) {
 }
 
 export default function App() {
+  const [currentUser, setCurrentUser] = useState(null);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [socialCallback, setSocialCallback] = useState(() => readSocialCallback(window.location.search));
+  useEffect(() => {
+    let active = true;
+    async function restoreSession() {
+      try {
+        const user = await fetchCurrentUser();
+        if (active) setCurrentUser(user);
+      } catch (error) {
+        if (active) setCurrentUser(null);
+      } finally {
+        if (active) setAuthChecked(true);
+      }
+    }
+
+    restoreSession();
+    return () => { active = false; };
+  }, []);
+
+  function finishSocialCallback() {
+    window.history.replaceState(null, "", "/");
+    setSocialCallback(null);
+  }
+
+  function handleAuthenticated(user) {
+    setCurrentUser(user);
+    setAuthChecked(true);
+  }
+
+  async function handleLogout() {
+    try {
+      await logoutUser();
+    } catch (error) {
+      console.error("Logout failed:", error);
+    } finally {
+      setCurrentUser(null);
+    }
+  }
+  if (!authChecked) {
+    return (
+      <div className="auth-shell">
+        <div className="background-orb orb-one" />
+        <div className="background-orb orb-two" />
+        <section className="auth-card glass-card">
+          <p className="eyebrow">Loading Session</p>
+          <h1>正在校验登录状态</h1>
+          <p className="doctor-copy">系统正在从后端读取当前登录用户，请稍候。</p>
+        </section>
+      </div>
+    );
+  }
+
+  if (socialCallback) {
+    return <SocialCallbackPanel action={socialCallback} onBack={finishSocialCallback} onBound={(user) => {
+      handleAuthenticated(user);
+      finishSocialCallback();
+    }} />;
+  }
+
+  if (currentUser?.role === "PATIENT") {
+    return <PatientPortal currentUser={currentUser} onLogout={handleLogout} />;
+  }
+
+  if (currentUser?.role === "DOCTOR") {
+    return <DoctorWorkspace key={currentUser.id || currentUser.username} currentUser={currentUser} handleLogout={handleLogout} />;
+  }
+  return <AuthPanel onAuthenticated={handleAuthenticated} />;
+}
+
+function DoctorWorkspace({ currentUser, handleLogout }) {
   const [patient, setPatient] = useState(null);
   const [patients, setPatients] = useState([]);
   const [sessions, setSessions] = useState([]);
   const [diagnosis, setDiagnosis] = useState(null);
   const [pipelineEvents, setPipelineEvents] = useState(initialEvents);
-  const [opinion, setOpinion] = useState("");
   const [feedback, setFeedback] = useState("");
+  const [demo, setDemo] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [consultationInput, setConsultationInput] = useState("");
-  const [consultationSubmitting, setConsultationSubmitting] = useState(false);
   const [activeSessionId, setActiveSessionId] = useState(null);
   const activeSessionIdRef = useRef(null);
   const [sessionDetail, setSessionDetail] = useState(null);
-  const [currentUser, setCurrentUser] = useState(null);
-  const [authChecked, setAuthChecked] = useState(false);
   const [patientSaving, setPatientSaving] = useState(false);
   const [activeTab, setActiveTab] = useState("workspace");
-  const [reminders, setReminders] = useState(() => readStoredReminders());
+  const reminderKey = REMINDER_STORAGE_KEY + "-" + (currentUser.id || currentUser.username);
+  const [reminders, setReminders] = useState(() => readStoredReminders(reminderKey));
   const [activeReminder, setActiveReminder] = useState(null);
   const [careMode, setCareMode] = useState(() => readStoredCareMode());
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -403,18 +380,22 @@ export default function App() {
   const [importResult, setImportResult] = useState(null);
   const [diagnosisRecords, setDiagnosisRecords] = useState([]);
   const [dragOver, setDragOver] = useState(false);
-  const [medicalEvidence, setMedicalEvidence] = useState(null);
-  const [medicalEvidenceFile, setMedicalEvidenceFile] = useState(null);
-  const [medicalEvidenceAnalyzing, setMedicalEvidenceAnalyzing] = useState(false);
-  const [medicalEvidenceConfirmed, setMedicalEvidenceConfirmed] = useState(false);
-  const [medicalEvidenceError, setMedicalEvidenceError] = useState("");
-  const [medicalEvidenceReviewNote, setMedicalEvidenceReviewNote] = useState("");
   const [collaboration, setCollaboration] = useState(null);
   const [collaborationBusyAction, setCollaborationBusyAction] = useState("");
+  const selectionEpoch = useRef(0);
+  const [drafts, setDrafts] = useState({});
+  const owner = draftKey(patient?.id, activeSessionId);
+  const draft = drafts[owner] || emptyDraft;
+  const { opinion, consultationInput, consultationSubmitting, medicalEvidence, medicalEvidenceFile,
+    medicalEvidenceAnalyzing, medicalEvidenceConfirmed, medicalEvidenceError, medicalEvidenceReviewNote, submitting } = draft;
+
+  function patchDraft(patch) {
+    setDrafts((current) => updateDraft(current, owner, patch));
+  }
   const hasUploadedMedicalEvidence = Boolean(medicalEvidenceFile || medicalEvidence);
   const hasConfirmedMedicalEvidence = Boolean(medicalEvidence?.evidenceText && medicalEvidenceConfirmed);
   const canSubmitConsultation = Boolean(
-    patient?.id
+    (patient?.id || (activeSessionId && sessionDetail?.sessionId === activeSessionId))
       && patient?.name?.trim()
       && (consultationInput.trim() || hasUploadedMedicalEvidence || hasConfirmedMedicalEvidence)
   );
@@ -425,8 +406,8 @@ export default function App() {
   }, [careMode]);
 
   useEffect(() => {
-    localStorage.setItem(REMINDER_STORAGE_KEY, JSON.stringify(reminders));
-  }, [reminders]);
+    localStorage.setItem(reminderKey, JSON.stringify(reminders));
+  }, [reminders, reminderKey]);
 
   useEffect(() => {
     const timers = reminders.map((reminder) => {
@@ -441,51 +422,34 @@ export default function App() {
   }, [reminders]);
 
   useEffect(() => {
-    async function restoreSession() {
-      try {
-        const user = await fetchCurrentUser();
-        setCurrentUser(user);
-      } catch (error) {
-        setCurrentUser(null);
-      } finally {
-        setAuthChecked(true);
-      }
-    }
-
-    restoreSession();
-  }, []);
-
-  useEffect(() => {
     if (!currentUser || currentUser.role !== "DOCTOR") {
       return;
     }
 
+    let cancelled = false;
+    const epoch = selectionEpoch.current;
     async function bootstrap() {
-      const [patientData, sessionData, diagnosisData, recordsData, collaborationData] = await Promise.all([
+      const [patientData, sessionData, recordsData, collaborationData] = await Promise.all([
         fetchPatients(),
         fetchSessions(),
-        fetchDiagnosis(),
         fetchDiagnosisRecords().catch(() => []),
         fetchDoctorCollaboration().catch(() => null)
       ]);
 
+      if (cancelled) return;
       const normalizedPatients = patientData.map(patientFromApi);
       setPatients(normalizedPatients);
-      setPatient(normalizedPatients[0] || emptyPatient);
+      if (selectionEpoch.current === epoch) setPatient(normalizedPatients[0] || emptyPatient);
       setSessions(sessionData);
-      setDiagnosis(diagnosisData);
       setDiagnosisRecords(recordsData);
       setCollaboration(collaborationData);
     }
 
     bootstrap().catch((error) => {
-      setFeedback(`初始化失败: ${error.message}`);
+      if (!cancelled) setFeedback(`初始化失败: ${error.message}`);
     });
+    return () => { cancelled = true; selectionEpoch.current += 1; };
   }, [currentUser]);
-
-  useEffect(() => {
-    activeSessionIdRef.current = activeSessionId;
-  }, [activeSessionId]);
 
   useEffect(() => {
     if (!currentUser || currentUser.role !== "DOCTOR") {
@@ -493,7 +457,7 @@ export default function App() {
     }
 
     const disconnect = connectPipelineSocket((event) => {
-      if (event.sessionId && event.sessionId !== activeSessionIdRef.current) {
+      if (!event.sessionId || event.sessionId !== activeSessionIdRef.current) {
         return;
       }
       setPipelineEvents((current) => [...current, event]);
@@ -502,42 +466,26 @@ export default function App() {
     return () => disconnect();
   }, [currentUser]);
 
-  function handleAuthenticated(user) {
-    setCurrentUser(user);
-    setAuthChecked(true);
-  }
-
-  async function handleLogout() {
-    try {
-      await logoutUser();
-    } catch (error) {
-      console.error("Logout failed:", error);
-    } finally {
-      setCurrentUser(null);
-      setPatient(null);
-      setPatients([]);
-      setSessions([]);
-      setDiagnosis(null);
-      setFeedback("");
-      setOpinion("");
-      setConsultationInput("");
-      setActiveSessionId(null);
-      setSessionDetail(null);
-      setCollaboration(null);
-      setPipelineEvents(initialEvents);
-      setAuthChecked(true);
-    }
-  }
-
-  function handleSelectPatient(nextPatient) {
-    setPatient(nextPatient);
-    setActiveSessionId(null);
+  function changeSelection(sessionId) {
+    selectionEpoch.current += 1;
+    activeSessionIdRef.current = sessionId;
+    setActiveSessionId(sessionId);
+    setPatient(null);
     setSessionDetail(null);
     setDiagnosis(null);
     setFeedback("");
+    setPipelineEvents(initialEvents);
+    setDemo(null);
+    setBusy(false);
+  }
+
+  function handleSelectPatient(nextPatient) {
+    changeSelection(null);
+    setPatient(nextPatient);
   }
 
   async function handleSavePatient(nextPatient) {
+    const epoch = selectionEpoch.current;
     setPatientSaving(true);
     setFeedback("");
 
@@ -550,7 +498,9 @@ export default function App() {
         const withoutSaved = current.filter((item) => item.id !== normalizedPatient.id);
         return [normalizedPatient, ...withoutSaved];
       });
-      setPatient(normalizedPatient);
+      if (selectionEpoch.current !== epoch) return;
+      if (normalizedPatient.id !== patient?.id) handleSelectPatient(normalizedPatient);
+      else setPatient(normalizedPatient);
       setFeedback(nextPatient.id ? "患者信息已更新。" : "患者信息已保存。");
       return normalizedPatient;
     } catch (error) {
@@ -562,20 +512,16 @@ export default function App() {
   }
 
   async function handleDeletePatient(patientId) {
+    const epoch = selectionEpoch.current;
     setFeedback("");
 
     try {
       const response = await deletePatient(patientId);
-      setPatients((current) => {
-        const next = current.filter((item) => item.id !== patientId);
-        if (patient?.id === patientId) {
-          setPatient(next[0] || emptyPatient);
-          setActiveSessionId(null);
-          setSessionDetail(null);
-          setDiagnosis(null);
-        }
-        return next;
-      });
+      setPatients((current) => current.filter((item) => item.id !== patientId));
+      if (selectionEpoch.current === epoch && patient?.id === patientId) {
+        handleSelectPatient(patients.find((item) => item.id !== patientId) || emptyPatient);
+      }
+      setDrafts((current) => { const next = { ...current }; delete next[draftKey(patientId, null)]; return next; });
       setFeedback(response.message);
     } catch (error) {
       setFeedback(`删除患者失败: ${error.message}`);
@@ -589,17 +535,12 @@ export default function App() {
       const response = await deleteSession(sessionId);
       setSessions((current) => current.filter((session) => session.id !== sessionId));
 
-      if (activeSessionId === sessionId) {
-        setActiveSessionId(null);
-        setSessionDetail(null);
-        setDiagnosis(null);
-        setConsultationInput("");
-        setPatient(emptyPatient);
-      }
+      if (activeSessionIdRef.current === sessionId) handleSelectPatient(emptyPatient);
+      setDrafts((current) => { const next = { ...current }; delete next[draftKey(null, sessionId)]; return next; });
 
       setFeedback(response.message);
     } catch (error) {
-      setFeedback(`删除会话失败: ${error.message}`);
+      setFeedback(`归档会话失败：${error.message}`);
     }
   }
 
@@ -609,26 +550,31 @@ export default function App() {
     try {
       const response = await deleteDiagnosisRecord(recordId);
       setDiagnosisRecords((current) => current.filter((r) => r.id !== recordId));
+      setSessionDetail((current) => current?.finalRecord?.id === recordId ? { ...current, finalRecord: null } : current);
       setFeedback(response.message);
     } catch (error) {
       setFeedback(`删除诊断报告失败: ${error.message}`);
     }
   }
 
+  function patientForDetail(detail) {
+    const recordId = detail.patientRecordId || detail.finalRecord?.patientRecordId;
+    return patients.find((item) => item.id === recordId) || { ...patientFromSessionDetail(detail), id: recordId || null };
+  }
+
   async function handleSelectSession(sessionId) {
-    activeSessionIdRef.current = sessionId;
-    setActiveSessionId(sessionId);
-    setFeedback("");
+    changeSelection(sessionId);
+    const epoch = selectionEpoch.current;
 
     try {
       const detail = await fetchSessionDetail(sessionId);
+      if (selectionEpoch.current !== epoch) return;
       setSessionDetail(detail);
-      setPatient(patientFromSessionDetail(detail));
-      if (detail?.diagnosis) {
-        setDiagnosis(detail.diagnosis);
-      }
+      setPatient(patientForDetail(detail));
+      setDiagnosis(detail.diagnosis || null);
       setFeedback(`已切换到会话 ${sessionId}，已载入完整追问历史。`);
     } catch (error) {
+      if (selectionEpoch.current !== epoch) return;
       setFeedback(`读取会话详情失败: ${error.message}`);
     }
   }
@@ -638,10 +584,7 @@ export default function App() {
     if (!normalized) {
       return;
     }
-    setConsultationInput((current) => {
-      const prefix = current.trim() ? `${current.trim()}\n\n` : "";
-      return `${prefix}补充诊断依据：${normalized}`;
-    });
+    patchDraft({ consultationInput: [consultationInput.trim(), "补充诊断依据：" + normalized].filter(Boolean).join("\n\n") });
     setActiveTab("workspace");
     setFeedback("补充依据已填入患者诉求，请确认后提交。");
   }
@@ -672,13 +615,15 @@ export default function App() {
       return;
     }
 
-    setConsultationSubmitting(true);
+    if (consultationSubmitting || !canSubmitConsultation) return;
+    const epoch = selectionEpoch.current;
+    patchDraft({ consultationSubmitting: true });
     setFeedback("");
-    const requestSessionId = activeSessionId || createSessionId();
+    const requestSessionId = activeSessionId || draft.requestSessionId || createSessionId();
     const createdSession = !activeSessionId;
     if (createdSession) {
       activeSessionIdRef.current = requestSessionId;
-      setActiveSessionId(requestSessionId);
+      patchDraft({ requestSessionId });
       setPipelineEvents(initialEvents);
     }
 
@@ -690,24 +635,18 @@ export default function App() {
         requestSessionId,
         {
           ...patient,
+          medicalEvidenceId: evidenceConfirmed ? medicalEvidence?.source?.id : undefined,
           medicalEvidence: confirmedEvidence,
           medicalEvidenceFileName: evidenceConfirmed ? (medicalEvidence?.fileName || medicalEvidenceFile?.name || "") : "",
           medicalEvidenceConfirmed: evidenceConfirmed
         }
       );
+      patchDraft({ ...emptyDraft, requestSessionId: null });
+      setSessions((current) => [response.session, ...current.filter((item) => item.id !== response.session.id)]);
+      if (selectionEpoch.current !== epoch) return;
       setActiveSessionId(response.sessionId);
       activeSessionIdRef.current = response.sessionId;
-      setConsultationInput("");
-      setMedicalEvidence(null);
-      setMedicalEvidenceFile(null);
-      setMedicalEvidenceConfirmed(false);
-      setMedicalEvidenceError("");
-      setMedicalEvidenceReviewNote("");
       setDiagnosis(response.diagnosis);
-      setSessions((current) => {
-        const next = current.filter((item) => item.id !== response.session.id);
-        return [response.session, ...next];
-      });
       setPatient((current) =>
         current
           ? {
@@ -717,32 +656,42 @@ export default function App() {
             }
           : current
       );
-      const detail = await fetchSessionDetail(response.sessionId);
+      let detail;
+      try {
+        detail = await fetchSessionDetail(response.sessionId);
+      } catch (error) {
+        if (selectionEpoch.current === epoch) setFeedback("本轮已提交，读取详情失败：" + error.message);
+        return;
+      }
+      if (selectionEpoch.current !== epoch) return;
       setSessionDetail(detail);
       setFeedback("病情整理 Agent 已完成本轮信息收集。");
     } catch (error) {
+      if (selectionEpoch.current !== epoch) return;
       if (createdSession) {
         activeSessionIdRef.current = null;
         setActiveSessionId(null);
       }
+      patchDraft({ medicalEvidenceConfirmed: false });
       setFeedback(`病情整理失败: ${error.message}`);
     } finally {
-      setConsultationSubmitting(false);
+      patchDraft({ consultationSubmitting: false });
     }
   }
 
   async function handleSimulate() {
+    const epoch = selectionEpoch.current;
     setBusy(true);
-    setPipelineEvents(initialEvents);
     setFeedback("");
 
     try {
       const response = await simulatePipeline();
-      setDiagnosis(response);
+      if (selectionEpoch.current === epoch) setDemo(response);
     } catch (error) {
+      if (selectionEpoch.current !== epoch) return;
       setFeedback(`流程模拟失败: ${error.message}`);
     } finally {
-      setBusy(false);
+      if (selectionEpoch.current === epoch) setBusy(false);
     }
   }
 
@@ -751,7 +700,9 @@ export default function App() {
   }
 
   async function handleDoctorSubmit(customOpinion = opinion) {
-    setSubmitting(true);
+    if (!activeSessionId || !diagnosis || submitting || consultationSubmitting) return;
+    const epoch = selectionEpoch.current;
+    patchDraft({ submitting: true });
     setFeedback("");
 
     try {
@@ -763,6 +714,10 @@ export default function App() {
         confidence: diagnosis?.confidence,
         opinion: customOpinion
       });
+      if (selectionEpoch.current !== epoch) {
+        await refreshCollaboration();
+        return;
+      }
       setFeedback(response.message);
       if (response.finalRecord) {
         setSessionDetail((current) =>
@@ -783,49 +738,74 @@ export default function App() {
         setCollaboration(collaborationData);
       }
       if (!customOpinion) {
-        setOpinion("");
+        patchDraft({ opinion: "" });
       }
     } catch (error) {
-      setFeedback(`提交失败: ${error.message}`);
+      if (selectionEpoch.current === epoch) setFeedback(`提交失败: ${error.message}`);
     } finally {
-      setSubmitting(false);
+      patchDraft({ submitting: false });
     }
   }
 
-  function handleGenerateReport() {
-    if (!diagnosis || !patient) {
-      setFeedback("请先完成患者诊断后再生成报告。");
-      return;
+  async function reportPatientFor(recordId, detail) {
+    if (recordId) {
+      const profile = await fetchPatient(recordId);
+      if (profile.id !== recordId || !profile.name?.trim()) throw new Error("无法核实报告关联的患者档案。");
+      return patientFromApi(profile);
     }
-
-    const reportHtml = buildDiagnosisReportHtml({
-      patient,
-      diagnosis,
-      opinion,
-      finalRecord: sessionDetail?.finalRecord,
-      doctorName: currentUser?.username
-    });
-    downloadDiagnosisReport(reportHtml, patient.name);
-    setFeedback("诊断报告已生成，可打开下载的 HTML 文件进行打印。");
+    const historical = patientFromSessionDetail(detail);
+    if (!historical.name) throw new Error("历史会话未记录可核实的患者姓名，无法导出报告。");
+    return historical;
   }
 
-  function handleGeneratePrescription() {
-    if (!patient?.name) {
-      setFeedback("请先选择患者后再生成药单。");
-      return;
-    }
-    if (!sessionDetail?.finalRecord?.treatmentAdvice) {
-      setFeedback("暂无开药建议，无法生成药单。请先完成诊断流程。");
-      return;
-    }
+  function downloadRevision(version) {
+    const html = buildDiagnosisReportHtml({ finalRecord: version,
+      sessionId: version.sessionId, doctorName: currentUser.username });
+    downloadDiagnosisReport(html, version.patientName || "历史档案", version);
+  }
 
-    const prescriptionHtml = buildPrescriptionHtml({
-      patient,
-      finalRecord: sessionDetail.finalRecord,
-      doctorName: currentUser?.username
-    });
-    downloadPrescription(prescriptionHtml, patient.name);
-    setFeedback("药单已生成，可打开下载的 HTML 文件进行打印。");
+  async function handleGenerateReport() {
+    if (!activeSessionId) return;
+    const epoch = selectionEpoch.current;
+    try {
+      const detail = await fetchSessionDetail(activeSessionId);
+      if (selectionEpoch.current !== epoch || detail.sessionId !== activeSessionId) return;
+      const record = isReviewedRecord(detail.finalRecord) ? detail.finalRecord : null;
+      if (!detail.diagnosis && !record) {
+        setFeedback("当前会话还没有可导出的诊断。");
+        return;
+      }
+      const profileId = record?.patientRecordId || detail.patientRecordId;
+      const reportPatient = await reportPatientFor(profileId, detail);
+      if (selectionEpoch.current !== epoch) return;
+      const html = buildDiagnosisReportHtml({ patient: reportPatient, diagnosis: detail.diagnosis,
+        finalRecord: record, sessionId: detail.sessionId, doctorName: currentUser.username });
+      downloadDiagnosisReport(html, reportPatient.name, record);
+      setFeedback(reportFileLabel(record) + "已下载，可打开文件打印。");
+    } catch (error) {
+      if (selectionEpoch.current === epoch) setFeedback("读取报告失败：" + error.message);
+    }
+  }
+
+  async function handleGeneratePrescription() {
+    if (!activeSessionId) return;
+    const epoch = selectionEpoch.current;
+    try {
+      const detail = await fetchSessionDetail(activeSessionId);
+      if (selectionEpoch.current !== epoch || detail.sessionId !== activeSessionId) return;
+      const record = detail.finalRecord;
+      if (!isReviewedRecord(record) || !record.treatmentAdvice) {
+        setFeedback("当前会话暂无已复核的用药建议。");
+        return;
+      }
+      const reportPatient = await reportPatientFor(record.patientRecordId || detail.patientRecordId, detail);
+      if (selectionEpoch.current !== epoch) return;
+      const html = buildPrescriptionHtml({ patient: reportPatient, finalRecord: record, doctorName: currentUser.username });
+      downloadPrescription(html, reportPatient.name);
+      setFeedback("药单已下载，可打开文件打印。");
+    } catch (error) {
+      if (selectionEpoch.current === epoch) setFeedback("读取药单失败：" + error.message);
+    }
   }
 
   function handleOpenImportModal() {
@@ -877,54 +857,49 @@ export default function App() {
       return;
     }
     if (file.size > MAX_UPLOAD_BYTES) {
-      setMedicalEvidenceError(`文件过大：${formatFileSize(file.size)}。请上传 50MB 以内的文件，或先压缩图片/PDF。`);
+      patchDraft({ medicalEvidenceError: `文件过大：${formatFileSize(file.size)}。请上传 50MB 以内的文件，或先压缩图片/PDF。` });
       setActiveTab("evidence");
       setFeedback(`检查资料过大：${formatFileSize(file.size)}，请上传 50MB 以内的文件。`);
       return;
     }
 
-    setMedicalEvidenceFile(file);
-    setMedicalEvidence(null);
-    setMedicalEvidenceConfirmed(false);
-    setMedicalEvidenceError("");
-    setMedicalEvidenceReviewNote("");
-    setMedicalEvidenceAnalyzing(true);
+    const epoch = selectionEpoch.current;
+    patchDraft({ medicalEvidenceFile: file, medicalEvidence: null, medicalEvidenceConfirmed: false,
+      medicalEvidenceError: "", medicalEvidenceReviewNote: "", medicalEvidenceAnalyzing: true });
     setFeedback("");
 
     try {
-      const result = await analyzeMedicalEvidence(file);
-      setMedicalEvidence(result);
+      const result = await analyzeMedicalEvidence(file, { patientRecordId: patient?.id, sessionId: activeSessionId });
+      patchDraft({ medicalEvidence: result });
+      if (selectionEpoch.current !== epoch) return;
       setActiveTab("evidence");
       setFeedback("检查资料已识别，请医生确认后再提交给诊断 Agent。");
     } catch (error) {
-      setMedicalEvidenceFile(null);
-      setMedicalEvidenceError(error.message);
+      patchDraft({ medicalEvidenceFile: null });
+      patchDraft({ medicalEvidenceError: error.message });
+      if (selectionEpoch.current !== epoch) return;
       setActiveTab("evidence");
       setFeedback(`检查资料识别失败: ${error.message}`);
     } finally {
-      setMedicalEvidenceAnalyzing(false);
+      patchDraft({ medicalEvidenceAnalyzing: false });
     }
   }
 
   function handleClearMedicalEvidence() {
-    setMedicalEvidence(null);
-    setMedicalEvidenceFile(null);
-    setMedicalEvidenceConfirmed(false);
-    setMedicalEvidenceError("");
-    setMedicalEvidenceReviewNote("");
+    patchDraft({ medicalEvidence: null, medicalEvidenceFile: null, medicalEvidenceConfirmed: false,
+      medicalEvidenceError: "", medicalEvidenceReviewNote: "" });
   }
 
   async function handleConfirmMedicalEvidence() {
     if (!medicalEvidence) return;
-    setMedicalEvidenceConfirmed(true);
-    if (patient?.id && (consultationInput.trim() || medicalEvidence.evidenceText)) {
+    if ((patient?.id || sessionDetail?.sessionId) && (consultationInput.trim() || medicalEvidence.evidenceText)) {
       await handleSubmitConsultation({
         evidenceConfirmed: true,
         allowMedicalEvidenceSubmission: true
       });
       return;
     }
-    setFeedback("检查资料已由医生确认，请补充患者文字信息后提交给诊断 Agent。");
+    setFeedback("请先选定患者并填写问诊信息，再确认检查资料。");
     setActiveTab("workspace");
   }
 
@@ -953,7 +928,7 @@ export default function App() {
       ]);
       const normalizedPatients = patientData.map(patientFromApi);
       setPatients(normalizedPatients);
-      setPatient(normalizedPatients[0] || emptyPatient);
+
       setDiagnosisRecords(recordsData);
       setFeedback("病例导入成功，患者信息已同步。");
     } catch (error) {
@@ -1018,11 +993,11 @@ export default function App() {
     }
   }
 
-  async function handlePublishDiagnosisRecord(recordId) {
+  async function handlePublishDiagnosisRecord(recordId, plan) {
     setCollaborationBusyAction(`publish-${recordId}`);
     setFeedback("");
     try {
-      await publishDiagnosisRecord(recordId);
+      await publishDiagnosisRecord(recordId, plan);
       await refreshCollaboration();
       setFeedback("诊断报告已发布给患者。");
     } catch (error) {
@@ -1030,28 +1005,6 @@ export default function App() {
     } finally {
       setCollaborationBusyAction("");
     }
-  }
-
-  if (!authChecked) {
-    return (
-      <div className="auth-shell">
-        <div className="background-orb orb-one" />
-        <div className="background-orb orb-two" />
-        <section className="auth-card glass-card">
-          <p className="eyebrow">Loading Session</p>
-          <h1>正在校验登录状态</h1>
-          <p className="doctor-copy">系统正在从后端读取当前登录用户，请稍候。</p>
-        </section>
-      </div>
-    );
-  }
-
-  if (!currentUser) {
-    return <AuthPanel onAuthenticated={handleAuthenticated} />;
-  }
-
-  if (currentUser.role === "PATIENT") {
-    return <PatientPortal currentUser={currentUser} onLogout={handleLogout} />;
   }
 
   return (
@@ -1069,23 +1022,22 @@ export default function App() {
       <main className="main-content-area">
         {activeTab === "workspace" && (
           <div className="workspace-tab">
-            <Sidebar
+            <Sidebar key={"sidebar:" + owner}
               patient={patient}
               patients={patients}
-              onPatientChange={setPatient}
               onSelectPatient={handleSelectPatient}
               onSavePatient={handleSavePatient}
               onDeletePatient={handleDeletePatient}
               patientSaving={patientSaving}
               sessions={sessions}
               activeSessionId={activeSessionId}
-              finalRecord={sessionDetail?.finalRecord}
+              finalRecord={isReviewedRecord(sessionDetail?.finalRecord) ? sessionDetail.finalRecord : null}
               consultationInput={consultationInput}
-              onConsultationInputChange={setConsultationInput}
+              onConsultationInputChange={(value) => patchDraft({ consultationInput: value })}
               onSubmitConsultation={handleSubmitConsultation}
               onSelectSession={handleSelectSession}
               onDeleteSession={handleDeleteSession}
-              consultationSubmitting={consultationSubmitting}
+              consultationSubmitting={consultationSubmitting || submitting}
               canSubmitConsultation={canSubmitConsultation}
               onGeneratePrescription={handleGeneratePrescription}
               medicalEvidence={medicalEvidence}
@@ -1096,10 +1048,12 @@ export default function App() {
               onClearMedicalEvidence={handleClearMedicalEvidence}
               onOpenEvidencePanel={() => setActiveTab("evidence")}
             />
-            <DiagnosticPanel
+            <DiagnosticPanel key={"diagnosis:" + owner}
               diagnosis={diagnosis}
               pipelineEvents={pipelineEvents}
               sessionDetail={sessionDetail}
+              demo={demo}
+              onCloseDemo={() => setDemo(null)}
               onSimulate={handleSimulate}
               onAppendPatientEvidence={handleAppendPatientEvidence}
               busy={busy}
@@ -1109,13 +1063,14 @@ export default function App() {
               diagnosis={diagnosis}
               patient={patient}
               opinion={opinion}
-              onOpinionChange={setOpinion}
+              onOpinionChange={(value) => patchDraft({ opinion: value })}
               onApprove={handleApprove}
               onSubmit={() => handleDoctorSubmit(opinion)}
               onGenerateReport={handleGenerateReport}
               feedback={feedback}
-              submitting={submitting}
-              reportDisabled={!activeSessionId || !diagnosis}
+              submitting={submitting || consultationSubmitting || ["待补充信息", "NEEDS_PATIENT_REPLY"].includes(sessionDetail?.status)}
+              finalRecord={isReviewedRecord(sessionDetail?.finalRecord) ? sessionDetail.finalRecord : null}
+              reportDisabled={!activeSessionId || !(diagnosis || sessionDetail?.finalRecord)}
             />
           </div>
         )}
@@ -1128,7 +1083,9 @@ export default function App() {
             evidenceError={medicalEvidenceError}
             evidenceReviewNote={medicalEvidenceReviewNote}
             submitting={consultationSubmitting}
-            onEvidenceReviewNoteChange={setMedicalEvidenceReviewNote}
+            feedback={feedback}
+            onEvidenceTextChange={(text) => patchDraft({ medicalEvidence: { ...medicalEvidence, evidenceText: text }, medicalEvidenceConfirmed: false })}
+            onEvidenceReviewNoteChange={(value) => patchDraft({ medicalEvidenceReviewNote: value })}
             onConfirmEvidence={handleConfirmMedicalEvidence}
             onClearEvidence={handleClearMedicalEvidence}
             onBackToWorkspace={() => setActiveTab("workspace")}
@@ -1143,36 +1100,9 @@ export default function App() {
                 <h2>多模型评审细节</h2>
               </div>
             </div>
-            {diagnosis?.reviewers && diagnosis.reviewers.length > 0 ? (
-              <div className="review-details-grid">
-                {diagnosis.reviewers.map((rev, index) => (
-                  <div key={index} className="reviewer-card">
-                    <h3>{rev.name}</h3>
-                    <div className="reviewer-metric">
-                      <span className="reviewer-metric-label">权重</span>
-                      <div className="reviewer-metric-bar">
-                        <div className="reviewer-metric-fill weight" style={{ width: `${Math.round(rev.weight * 100)}%` }} />
-                      </div>
-                      <span className="reviewer-metric-value">{Math.round(rev.weight * 100)}%</span>
-                    </div>
-                    <div className="reviewer-metric">
-                      <span className="reviewer-metric-label">认可度</span>
-                      <div className="reviewer-metric-bar">
-                        <div className="reviewer-metric-fill score" style={{ width: `${Math.round(rev.score * 100)}%` }} />
-                      </div>
-                      <span className="reviewer-metric-value">{Math.round(rev.score * 100)}%</span>
-                    </div>
-                    <div className="reviewer-comment">
-                      <strong>评审观点</strong>
-                      {rev.comment}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="treatment-empty">暂无评审细节，请先在工作台完成 AI 诊断。</p>
-            )}
-            
+            <ReviewerResults reviewers={diagnosis?.reviewers} />
+            {activeSessionId && <SessionEvidence sessionId={activeSessionId} />}
+
             <div className="pipeline-events-section">
               <h3>诊断工作流动态</h3>
               <div className="pipeline-log">
@@ -1225,7 +1155,7 @@ export default function App() {
                         <article className="diagnosis-record-item" key={record.id}>
                           <div className="record-info">
                             <h4>{record.chiefComplaint || "未填写主诉"}</h4>
-                            <p className="record-conclusion">{record.aiConclusion || "暂无诊断结论"}</p>
+                            <p className="record-conclusion">{record.finalConclusion || record.aiConclusion || "暂无诊断结论"}</p>
                             <div className="record-meta">
                               <span className={`risk-badge risk-${(record.riskLevel || "").replace("风险", "")}`}>{record.riskLevel || "未知"}</span>
                               <span className="record-time">{record.updatedAt || ""}</span>
@@ -1235,9 +1165,15 @@ export default function App() {
                             <span className={`status-badge status-${(record.reviewStatus || "").toLowerCase()}`}>
                               {record.reviewStatus === "IMPORTED" ? "导入" : record.reviewStatus || "未知"}
                             </span>
+                            <ReportVersions record={record} onDownload={downloadRevision} />
+                            {record.reviewStatus !== "IMPORTED" && <button className="secondary-button" type="button" onClick={() => {
+                              handleSelectSession(record.sessionId);
+                              setActiveTab("workspace");
+                            }}>打开复核</button>}
                             <button
                               className="ghost-icon danger"
                               type="button"
+                              disabled={record.publishedToPatient}
                               title="删除报告"
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1352,6 +1288,7 @@ export default function App() {
         {activeTab === "collaboration" && (
           <DoctorCollaborationPanel
             collaboration={collaboration}
+            onRefresh={refreshCollaboration}
             diagnosisRecords={diagnosisRecords}
             busyAction={collaborationBusyAction}
             feedback={feedback}

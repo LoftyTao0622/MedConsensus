@@ -16,11 +16,43 @@ import {
   askReportExplanation,
   answerPatientQuestion,
   fetchReportExplanation,
+  fetchPublishedRevisions,
   fetchPatientDashboard,
   requestDoctorBinding,
   startPatientConsultation,
   uploadPatientEvidence
 } from "../api/patient";
+import { useFollowUps } from "../api/followUp";
+import { ReportFollowUp } from "./ReportFollowUp";
+import { SessionEvidence } from "./EvidenceSource";
+import "./followUp.css";
+
+function RevisionHistory({report}) {
+  const [open, setOpen] = useState(false);
+  const [versions, setVersions] = useState([]);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+    setError("");
+    fetchPublishedRevisions(report.id).then(rows => { if (active) setVersions(rows); })
+      .catch(err => { if (active) setError(err.message); });
+    return () => { active = false; };
+  }, [open, report.id, report.revision]);
+  if (report.revision < 2) return null;
+  return <details onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary>查看历次发布内容</summary>
+    {error && <p role="alert">{error}</p>}
+    {versions.map(v => <section key={v.revision}>
+      <h4>第 {v.revision} 版 · {formatTime(v.publishedAt)}</h4>
+      <p>诊断结论：{v.finalConclusion}</p>
+      {v.doctorOpinion && <p>医生说明：{v.doctorOpinion}</p>}
+      <p>风险等级：{v.riskLevel || "未记录"}</p>
+      <p>治疗与复诊建议：{v.treatmentAdvice || "未记录"}</p>
+      <SessionEvidence sessionId={report.sessionId} reportId={report.id} revision={v.revision} />
+    </section>)}
+  </details>;
+}
 
 const statusCopy = {
   NEEDS_PATIENT_REPLY: "待补充信息",
@@ -46,6 +78,7 @@ export function PatientPortal({ currentUser, onLogout }) {
   const [explanationInputs, setExplanationInputs] = useState({});
   const [feedback, setFeedback] = useState("");
   const [busyAction, setBusyAction] = useState("");
+  const followUps = useFollowUps("patient", dashboard);
 
   const activeRelations = useMemo(
     () => (dashboard?.relations || []).filter((item) => item.status === "ACTIVE"),
@@ -120,12 +153,14 @@ export function PatientPortal({ currentUser, onLogout }) {
     );
   }
 
-  async function handleLoadExplanation(reportId) {
-    if (explanationChats[reportId]) return;
+  async function handleLoadExplanation(reportId, revision) {
+    const key = reportId + "-" + revision;
+    if (explanationChats[key]) return;
     setBusyAction(`explanation-load-${reportId}`);
     try {
       const chat = await fetchReportExplanation(reportId);
-      setExplanationChats((current) => ({ ...current, [reportId]: chat.messages || [] }));
+      if (chat.revision !== revision) throw new Error("报告已更新，请刷新后查看最新解释。");
+      setExplanationChats((current) => ({ ...current, [key]: chat.messages || [] }));
     } catch (error) {
       setFeedback(error.message);
     } finally {
@@ -133,15 +168,17 @@ export function PatientPortal({ currentUser, onLogout }) {
     }
   }
 
-  async function handleExplanationQuestion(reportId) {
-    const message = explanationInputs[reportId]?.trim();
+  async function handleExplanationQuestion(reportId, revision) {
+    const key = reportId + "-" + revision;
+    const message = explanationInputs[key]?.trim();
     if (!message) return;
     setBusyAction(`explanation-${reportId}`);
     setFeedback("");
     try {
-      const chat = await askReportExplanation(reportId, message);
-      setExplanationChats((current) => ({ ...current, [reportId]: chat.messages || [] }));
-      setExplanationInputs((current) => ({ ...current, [reportId]: "" }));
+      const chat = await askReportExplanation(reportId, message, revision);
+      if (chat.revision !== revision) throw new Error("报告已更新，请刷新后查看最新解释。");
+      setExplanationChats((current) => ({ ...current, [key]: chat.messages || [] }));
+      setExplanationInputs((current) => ({ ...current, [key]: "" }));
     } catch (error) {
       setFeedback(error.message);
     } finally {
@@ -375,6 +412,7 @@ export function PatientPortal({ currentUser, onLogout }) {
                   ) : null}
                 </div>
 
+                {consultation.evidenceFileName && <SessionEvidence sessionId={consultation.sessionId} />}
                 {consultation.status === "NEEDS_PATIENT_REPLY" ? (
                   <div className="patient-reply-box">
                     <label>
@@ -412,22 +450,27 @@ export function PatientPortal({ currentUser, onLogout }) {
           </div>
 
           <div className="patient-report-list">
+            {followUps.error && <p role="alert">{followUps.error} <button onClick={followUps.refresh}>重试</button></p>}
             {dashboard.reports.length ? dashboard.reports.map((report) => (
               <details
                 className="patient-report"
-                key={report.id}
+                key={report.id + "-" + report.revision}
                 onToggle={(event) => {
-                  if (event.currentTarget.open) handleLoadExplanation(report.id);
+                  if (event.currentTarget === event.target && event.currentTarget.open) handleLoadExplanation(report.id, report.revision);
                 }}
               >
                 <summary>
                   <div>
                     <strong>{report.finalConclusion || "医生诊断报告"}</strong>
-                    <span>{report.doctorName} · {formatTime(report.publishedAt)}</span>
+                    <span>{report.doctorName} · 第 {report.revision} 版 · {formatTime(report.publishedAt)}</span>
                   </div>
                   <span className="patient-state state-active">医生已发布</span>
                 </summary>
                 <div className="patient-report-body">
+                  <RevisionHistory report={report} />
+                  {followUps.tasks.filter(task => task.recordId === report.id).map(task =>
+                    <ReportFollowUp key={task.id} task={task} patient onChange={followUps.refresh} />)}
+                  <SessionEvidence sessionId={report.sessionId} reportId={report.id} revision={report.revision} />
                   <section>
                     <h4>本次主诉</h4>
                     <p>{report.chiefComplaint || "未记录"}</p>
@@ -450,7 +493,7 @@ export function PatientPortal({ currentUser, onLogout }) {
                       <p>只能解释这份已发布报告，不会修改诊断或提供新的用药方案。</p>
                     </div>
                     <div className="patient-chat-thread explanation">
-                      {(explanationChats[report.id] || []).map((message, index) => (
+                      {(explanationChats[report.id + "-" + report.revision] || []).map((message, index) => (
                         <div
                           className={`patient-chat-message ${message.role === "assistant" ? "assistant" : "user"}`}
                           key={`${report.id}-explanation-${message.role}-${index}`}
@@ -465,11 +508,11 @@ export function PatientPortal({ currentUser, onLogout }) {
                     </div>
                     <div className="patient-explanation-composer">
                       <textarea
-                        value={explanationInputs[report.id] || ""}
+                        value={explanationInputs[report.id + "-" + report.revision] || ""}
                         onChange={(event) =>
                           setExplanationInputs((current) => ({
                             ...current,
-                            [report.id]: event.target.value
+                            [report.id + "-" + report.revision]: event.target.value
                           }))
                         }
                         placeholder="例如：报告里的“中高风险”是什么意思？哪些情况需要尽快复诊？"
@@ -477,9 +520,9 @@ export function PatientPortal({ currentUser, onLogout }) {
                       <button
                         className="primary-button"
                         type="button"
-                        onClick={() => handleExplanationQuestion(report.id)}
+                        onClick={() => handleExplanationQuestion(report.id, report.revision)}
                         disabled={
-                          !explanationInputs[report.id]?.trim()
+                          !explanationInputs[report.id + "-" + report.revision]?.trim()
                           || busyAction === `explanation-${report.id}`
                         }
                       >

@@ -15,6 +15,7 @@ import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
 import java.io.IOException;
 import java.util.List;
+import com.zyt.medconsensus.dto.ReportRevisionDto;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -48,6 +49,7 @@ public class PatientPortalController {
         this(patientPortalService, new MedicalFileUploadValidator());
     }
 
+    @org.springframework.beans.factory.annotation.Autowired
     public PatientPortalController(PatientPortalService patientPortalService, MedicalFileUploadValidator fileUploadValidator) {
         this.patientPortalService = patientPortalService;
         this.fileUploadValidator = fileUploadValidator;
@@ -133,6 +135,16 @@ public class PatientPortalController {
             HttpSession session
     ) {
         return patientPortalService.confirmEvidence(currentDoctorId(session), consultationId);
+    }
+
+    @GetMapping("/workspace/diagnosis-records/{recordId}/revisions")
+    public List<ReportRevisionDto> doctorRevisions(@PathVariable Long recordId, HttpSession session) {
+        return patientPortalService.doctorReportRevisions(currentDoctorId(session), recordId);
+    }
+
+    @GetMapping("/patient/reports/{recordId}/revisions")
+    public List<ReportRevisionDto> patientRevisions(@PathVariable Long recordId, HttpSession session) {
+        return patientPortalService.patientReportRevisions(currentPatientId(session), recordId);
     }
 
     @PostMapping("/workspace/diagnosis-records/{recordId}/publish")

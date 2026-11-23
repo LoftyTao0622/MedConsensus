@@ -9,6 +9,7 @@ public class ConsultationRequest {
     private String sessionId;
 
     private Long patientAccountId;
+    private Long patientRecordId;
 
     @NotBlank
     @Size(max = 4000)
@@ -38,6 +39,12 @@ public class ConsultationRequest {
     @Size(max = 255)
     private String medicalEvidenceFileName;
 
+    @Size(max = 36)
+    private String medicalEvidenceId;
+
+    public String getMedicalEvidenceId() { return medicalEvidenceId; }
+    public void setMedicalEvidenceId(String id) { this.medicalEvidenceId = id; }
+
     private boolean medicalEvidenceConfirmed;
 
     public String getSessionId() {
@@ -49,6 +56,10 @@ public class ConsultationRequest {
     }
 
     public Long getPatientAccountId() { return patientAccountId; }
+
+    public Long getPatientRecordId() { return patientRecordId; }
+
+    public void setPatientRecordId(Long patientRecordId) { this.patientRecordId = patientRecordId; }
 
     public void setPatientAccountId(Long patientAccountId) { this.patientAccountId = patientAccountId; }
 

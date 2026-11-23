@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { HeartPulse, LogIn, UserPlus } from "lucide-react";
+import { SocialLoginButtons } from "./SocialLogin";
 import { loginUser, registerUser } from "../api/auth";
 
 const loginInitialState = {
@@ -16,7 +17,7 @@ const registerInitialState = {
 };
 
 export function AuthPanel({ onAuthenticated }) {
-  const [role, setRole] = useState("DOCTOR");
+  const [role, setRole] = useState(null);
   const [mode, setMode] = useState("login");
   const [loginForm, setLoginForm] = useState(loginInitialState);
   const [registerForm, setRegisterForm] = useState(registerInitialState);
@@ -32,11 +33,13 @@ export function AuthPanel({ onAuthenticated }) {
 
   async function handleLoginSubmit(event) {
     event.preventDefault();
+    if (!role || submitting) return;
     setSubmitting(true);
     setError("");
 
     try {
       const user = await loginUser({ ...loginForm, role });
+      if (user?.role !== role) throw new Error("返回的账号身份与所选身份不一致，请重新登录。");
       onAuthenticated(user);
     } catch (requestError) {
       setError(requestError.message);
@@ -47,11 +50,13 @@ export function AuthPanel({ onAuthenticated }) {
 
   async function handleRegisterSubmit(event) {
     event.preventDefault();
+    if (!role || submitting) return;
     setSubmitting(true);
     setError("");
 
     try {
       const user = await registerUser({ ...registerForm, role });
+      if (user?.role !== role) throw new Error("返回的账号身份与所选身份不一致，请重新登录。");
       onAuthenticated(user);
     } catch (requestError) {
       setError(requestError.message);
@@ -73,15 +78,17 @@ export function AuthPanel({ onAuthenticated }) {
           <p className="eyebrow">Medical Consensus Platform</p>
           <h1>共智专医</h1>
           <p>
-            {role === "DOCTOR"
+            {!role ? "请先选择医生或患者身份，再登录或注册。" : role === "DOCTOR"
               ? "进入 AI 诊断协作台，管理患者资料、处理患者问诊，并在审核环节提交专业意见。"
               : "提交症状和检查资料，回答医生追问，并查看医生审核后发布的诊断报告。"}
           </p>
         </div>
 
-        <div className="role-switch" aria-label="选择登录角色">
+        <div className="role-switch" role="group" aria-label="选择账号身份">
           <button
             className={role === "DOCTOR" ? "role-option active" : "role-option"}
+            aria-pressed={role === "DOCTOR"}
+            disabled={submitting}
             type="button"
             onClick={() => {
               setRole("DOCTOR");
@@ -92,6 +99,8 @@ export function AuthPanel({ onAuthenticated }) {
           </button>
           <button
             className={role === "PATIENT" ? "role-option active" : "role-option"}
+            aria-pressed={role === "PATIENT"}
+            disabled={submitting}
             type="button"
             onClick={() => {
               setRole("PATIENT");
@@ -105,6 +114,7 @@ export function AuthPanel({ onAuthenticated }) {
         <div className="auth-switch">
           <button
             className={mode === "login" ? "auth-tab active" : "auth-tab"}
+            disabled={submitting}
             type="button"
             onClick={() => {
               setMode("login");
@@ -116,6 +126,7 @@ export function AuthPanel({ onAuthenticated }) {
           </button>
           <button
             className={mode === "register" ? "auth-tab active" : "auth-tab"}
+            disabled={submitting}
             type="button"
             onClick={() => {
               setMode("register");
@@ -127,7 +138,7 @@ export function AuthPanel({ onAuthenticated }) {
           </button>
         </div>
 
-        {mode === "login" ? (
+        {!role ? null : mode === "login" ? (
           <form className="auth-form" onSubmit={handleLoginSubmit}>
             <label>
               手机号
@@ -270,6 +281,7 @@ export function AuthPanel({ onAuthenticated }) {
           </form>
         )}
 
+        {role && mode === "login" && <SocialLoginButtons role={role} disabled={submitting} />}
         {error ? <div className="feedback-box">{error}</div> : null}
       </section>
     </div>

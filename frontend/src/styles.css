@@ -159,6 +159,13 @@ textarea {
   color: #10324d;
 }
 
+.social-login-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 16px;
+}
+
 .auth-submit {
   grid-column: 1 / -1;
 }

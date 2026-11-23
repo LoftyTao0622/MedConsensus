@@ -4,6 +4,7 @@ import jakarta.validation.ConstraintViolationException;
 import java.util.Map;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -22,14 +23,13 @@ public class ApiExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(ApiExceptionHandler.class);
 
     @ExceptionHandler(ResponseStatusException.class)
-    @ResponseStatus
-    public Map<String, Object> handleResponseStatusException(ResponseStatusException exception) {
+    public ResponseEntity<Map<String, Object>> handleResponseStatusException(ResponseStatusException exception) {
         HttpStatus status = HttpStatus.valueOf(exception.getStatusCode().value());
-        return Map.of(
+        return ResponseEntity.status(status).body(Map.of(
                 "status", status.value(),
                 "message", status.is5xxServerError() ? "服务暂时不可用，请稍后重试"
                         : (exception.getReason() == null ? status.getReasonPhrase() : exception.getReason())
-        );
+        ));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

@@ -103,6 +103,18 @@ spring:
 server:
   port: 8086
 app:
+  auth:
+    social:
+      wechat:
+        enabled: ${WECHAT_LOGIN_ENABLED:false}
+        app-id: ${WECHAT_LOGIN_APP_ID:}
+        app-secret: ${WECHAT_LOGIN_APP_SECRET:}
+        redirect-uri: ${WECHAT_LOGIN_REDIRECT_URI:}
+      qq:
+        enabled: ${QQ_LOGIN_ENABLED:false}
+        app-id: ${QQ_LOGIN_APP_ID:}
+        app-secret: ${QQ_LOGIN_APP_SECRET:}
+        redirect-uri: ${QQ_LOGIN_REDIRECT_URI:}
   security:
     allowed-origins: ${APP_SECURITY_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:8086}
   patient-skill:

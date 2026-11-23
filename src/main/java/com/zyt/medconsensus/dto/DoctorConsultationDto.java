@@ -11,7 +11,9 @@ public record DoctorConsultationDto(
         String evidenceStatus,
         String evidenceFileName,
         String evidenceText,
+        String evidenceSourceId,
         boolean reportReady,
+        Long reportId,
         boolean reportPublished,
         String updatedAt
 ) {

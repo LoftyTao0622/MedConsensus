@@ -5,7 +5,7 @@ function percent(value) {
   return `${Math.round(value * 100)}%`;
 }
 
-export function DiagnosticPanel({ diagnosis, pipelineEvents, onSimulate, onAppendPatientEvidence, busy }) {
+export function DiagnosticPanel({ diagnosis, pipelineEvents, onSimulate, onAppendPatientEvidence, busy, demo, onCloseDemo }) {
   const confidence = diagnosis?.confidence ?? 0;
   const [patientEvidence, setPatientEvidence] = useState("");
   const [submittedEvidence, setSubmittedEvidence] = useState("");
@@ -41,6 +41,14 @@ export function DiagnosticPanel({ diagnosis, pipelineEvents, onSimulate, onAppen
           {busy ? "推演中..." : "模拟多 Agent 流程"}
         </button>
       </div>
+
+      {demo && (
+        <section className="feedback-box" aria-label="模拟案例">
+          <strong>模拟案例 · 流程演示</strong>
+          <p>{demo.conclusion}</p>
+          <button type="button" className="secondary-button" onClick={onCloseDemo}>关闭演示</button>
+        </section>
+      )}
 
       <div className="hero-card">
         <div>

@@ -18,9 +18,6 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/auth")
 public class AuthController {
 
-    private static final String SESSION_USER_ID = "CURRENT_USER_ID";
-    private static final String SESSION_USER_ROLE = "CURRENT_USER_ROLE";
-
     private final DoctorService doctorService;
 
     public AuthController(DoctorService doctorService) {
@@ -29,32 +26,22 @@ public class AuthController {
 
     @PostMapping("/register")
     public AuthResponse register(@Valid @RequestBody RegisterRequest request, HttpServletRequest servletRequest, HttpSession session) {
-        AuthResponse response = doctorService.register(request);
-        rotateSessionId(servletRequest);
-        session.setAttribute(SESSION_USER_ID, response.id());
-        session.setAttribute(SESSION_USER_ROLE, response.role());
-        return response;
+        return LoginSession.establish(servletRequest, session, doctorService.register(request));
     }
 
     @PostMapping("/login")
     public AuthResponse login(@Valid @RequestBody LoginRequest request, HttpServletRequest servletRequest, HttpSession session) {
-        AuthResponse response = doctorService.login(request);
-        rotateSessionId(servletRequest);
-        session.setAttribute(SESSION_USER_ID, response.id());
-        session.setAttribute(SESSION_USER_ROLE, response.role());
-        return response;
+        return LoginSession.establish(servletRequest, session, doctorService.login(request));
     }
 
     @GetMapping("/me")
     public AuthResponse me(HttpSession session) {
-        Object userId = session.getAttribute(SESSION_USER_ID);
-        Object role = session.getAttribute(SESSION_USER_ROLE);
-        AuthResponse response = doctorService.getCurrentUser(
+        Object userId = session.getAttribute(LoginSession.USER_ID);
+        Object role = session.getAttribute(LoginSession.ROLE);
+        return doctorService.getCurrentUser(
                 userId instanceof Long ? (Long) userId : null,
                 role instanceof String ? (String) role : null
         );
-        session.setAttribute(SESSION_USER_ROLE, response.role());
-        return response;
     }
 
     @PostMapping("/logout")
@@ -63,11 +50,4 @@ public class AuthController {
         return Map.of("success", true, "message", "已退出登录");
     }
 
-    private void rotateSessionId(HttpServletRequest request) {
-        try {
-            request.changeSessionId();
-        } catch (IllegalStateException ignored) {
-            // A newly-created session may not have an id to rotate yet.
-        }
-    }
 }

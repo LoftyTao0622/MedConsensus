@@ -81,12 +81,15 @@ public class DoctorServiceImpl implements DoctorService {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "当前未登录");
         }
 
-        if ("PATIENT".equals(normalizeRole(role))) {
+        if ("PATIENT".equals(role)) {
             PatientAccount patient = patientAccountMapper.findById(userId)
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "登录状态已失效"));
             return toPatientResponse(patient);
         }
 
+        if (!"DOCTOR".equals(role)) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "登录身份已失效，请重新登录");
+        }
         DoctorBasicInfo doctor = doctorBasicInfoMapper.findById(userId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "登录状态已失效"));
 
@@ -170,9 +173,10 @@ public class DoctorServiceImpl implements DoctorService {
     }
 
     private String normalizeRole(String role) {
-        String normalized = role == null || role.isBlank()
-                ? "DOCTOR"
-                : role.trim().toUpperCase(Locale.ROOT);
+        if (role == null || role.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "请选择医生或患者身份");
+        }
+        String normalized = role.trim().toUpperCase(Locale.ROOT);
         if (!"DOCTOR".equals(normalized) && !"PATIENT".equals(normalized)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "不支持的账号角色");
         }

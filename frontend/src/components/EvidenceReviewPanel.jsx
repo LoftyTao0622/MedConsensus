@@ -1,3 +1,4 @@
+import { SourceDetails } from "./EvidenceSource";
 import { AlertTriangle, CheckCircle2, FileSearch, RotateCcw, ShieldAlert, XCircle } from "lucide-react";
 
 function asList(value) {
@@ -34,9 +35,11 @@ export function EvidenceReviewPanel({
   evidenceFile,
   evidenceConfirmed,
   evidenceError,
+  feedback,
   evidenceReviewNote,
   submitting,
   onEvidenceReviewNoteChange,
+  onEvidenceTextChange,
   onConfirmEvidence,
   onClearEvidence,
   onBackToWorkspace
@@ -65,6 +68,7 @@ export function EvidenceReviewPanel({
         <p>AI 识别结果仅用于辅助病情整理和诊断推理，不能替代放射科报告、检验报告或医生最终诊断。</p>
       </div>
 
+      {feedback && <p className="feedback-box" role="status">{feedback}</p>}
       {evidenceError ? (
         <div className="evidence-state-panel error">
           <XCircle size={28} />
@@ -103,6 +107,13 @@ export function EvidenceReviewPanel({
             </div>
           </div>
 
+          <SourceDetails source={evidence.source} />
+          <label className="evidence-section">
+            进入诊断的资料文本（可校正）
+            <textarea rows={6} maxLength={12000} value={evidence.evidenceText || ""} disabled={submitting}
+              onChange={(event) => onEvidenceTextChange(event.target.value)} />
+          </label>
+
           {redFlags.length ? (
             <div className="evidence-red-flags">
               <AlertTriangle size={18} />
@@ -134,6 +145,7 @@ export function EvidenceReviewPanel({
           <label className="evidence-review-note">
             <span>医生确认备注或修正</span>
             <textarea
+              disabled={submitting}
               value={evidenceReviewNote}
               onChange={(event) => onEvidenceReviewNoteChange(event.target.value)}
               placeholder="可补充：该资料是否清晰、影像所见是否可信、需要修正的字段或人工复核意见。"
@@ -145,7 +157,7 @@ export function EvidenceReviewPanel({
               <RotateCcw size={16} />
               清除资料
             </button>
-            <button className="primary-button" type="button" onClick={onConfirmEvidence} disabled={submitting}>
+            <button className="primary-button" type="button" onClick={onConfirmEvidence} disabled={submitting || !evidence.evidenceText?.trim()}>
               <CheckCircle2 size={16} />
               {submitting ? "提交中..." : "确认并用于诊断 Agent"}
             </button>

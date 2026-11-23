@@ -1,8 +1,8 @@
 # MedConsensus
 
-MedConsensus is a clinician-facing medical multi-agent consensus workspace. It collects a patient’s chief complaint and supporting evidence, coordinates Collector, Diagnosis, Reviewer, and Decision stages, streams progress in real time, and stores a final diagnosis and treatment note after clinician review.
+MedConsensus is a medical decision-support workspace for clinicians and patients. A patient can submit a complaint and supporting documents. The clinician reviews the sources and independent model opinions, records a final assessment, and publishes a report the patient can revisit.
 
-> ⚕️ **Clinical safety**: MedConsensus is a decision-support tool. It must not be used for self-diagnosis or automatic prescribing. A qualified clinician must confirm every diagnosis and medication recommendation.
+> ⚕️ **Clinical safety.** A qualified clinician must confirm every diagnosis and medication recommendation. The patient portal supports consultation and follow-up. It does not provide self-diagnosis or automatic prescribing.
 
 [中文](README.md) · [Project guide](docs/project-guide.md) · [Deployment guide](docs/deployment.md) · [MIT License](LICENSE)
 
@@ -16,36 +16,36 @@ MedConsensus is a clinician-facing medical multi-agent consensus workspace. It c
 
 | If you want to… | Start here | You will get |
 | --- | --- | --- |
-| Try the complete workspace locally (recommended) | [Local development](#-local-development) | A React UI at `http://localhost:5173` |
-| Run the supporting services in containers | [Docker dependencies](#1-start-the-supporting-services) | PostgreSQL, Redis, and Neo4j |
-| Prepare a server deployment | [Deployment guide](docs/deployment.md) | Compose setup, environment variables, health checks, and upgrade notes |
+| Try the workspace locally (recommended) | [Local development](#-local-development) | A React UI at `http://localhost:5173` |
+| Connect a host-run backend to the data services | [Supporting services](#1-start-the-supporting-services) | Connection details for PostgreSQL, Redis, and Neo4j |
+| Prepare a server deployment | [Deployment guide](docs/deployment.md) | Compose setup, provider credentials, health checks, and upgrades |
 
 ## 🔎 Core workflow
 
 ```mermaid
 flowchart LR
-    A[Clinician login] --> B[Choose or create patient]
-    B --> C[Submit complaint and evidence]
-    C --> D[Collector organizes case]
-    D --> E[Diagnosis proposes initial findings]
-    E --> F[GPT / Kimi / GLM reviewers]
-    F --> G[Decision vote and risk control]
-    G --> H{Human review needed?}
-    H -- Yes --> I[Clinician review]
-    H -- No --> J[AI preliminary suggestion]
-    I --> K[Save final diagnosis]
-    K --> L[Treatment explains next steps]
+    A[Patient or clinician submits a case] --> B[Collector organizes the complaint]
+    C[Clinician confirms uploaded evidence] --> B
+    B --> D[Diagnosis proposes findings]
+    D --> E[GPT, Kimi and GLM review independently]
+    E --> F{Risk and valid votes}
+    F -->|High risk, low confidence or fewer than two votes| G[Case flagged for human review]
+    F -->|Preliminary suggestion| H[Clinician reviews the findings]
+    G --> H
+    H --> I[Save final diagnosis and treatment note]
+    I --> J[Publish a report version with optional follow-up]
 ```
 
-The patient portal supports clinician binding, follow-up consultation, and evidence upload. The clinician workspace handles collaboration, evidence confirmation, and report publishing. Progress is delivered over STOMP WebSocket `/ws/diagnosis` to `/user/queue/pipeline`.
+Patients request a clinician connection by invite code. Once the clinician accepts, the patient can start a consultation and respond to questions. Clinicians see progress over STOMP at `/ws/diagnosis` through their `/user/queue/pipeline` subscription.
 
 ## ✨ Capabilities
 
-- **Multi-agent consensus**: Collector, Diagnosis, Reviewer, Decision, and Treatment agents run through a LangGraph4j workflow.
-- **Evidence enrichment**: Parse PDF, DOCX, JPG, JPEG, and PNG files, with pgvector embedding storage/import and Neo4j medical knowledge-graph evidence.
-- **Human-in-the-loop**: High-risk or confirmation-required results go to clinician review before a final record is created.
-- **Live workspace**: React + Vite pages for authentication, patients, sessions, diagnosis, evidence review, and history.
-- **Observability**: Optional LangSmith / OpenTelemetry tracing; content capture is disabled by default.
+- **Evidence review.** Open the original PDF, DOCX, JPEG, or PNG beside the extracted findings, check available page or location references, and correct the text before confirming it. Each published report version retains its evidence references. The workflow can also draw on pgvector and the Neo4j medical knowledge graph.
+- **Independent model review.** The decision stage weights valid GPT, Kimi, and GLM votes. A timeout or invalid response appears as an absent vote. Fewer than two valid votes, high risk, or low confidence routes the case to a clinician.
+- **Consultation history.** PostgreSQL stores the complete consultation message history, diagnostic snapshot, and session status. Clinicians can reopen a session after a restart. Drafts and attachments in the workspace stay with their patient or session.
+- **Report revisions.** Clinicians can export a labeled draft, save their review, and publish it to the patient. Publishing a correction creates another version. Earlier published conclusions and their supporting evidence remain available.
+- **Follow-up and work queue.** Clinicians can set a due date and instructions when publishing a report. Patients submit results against that report version. Clinicians can filter their queue by evidence awaiting confirmation, cases awaiting review, reports ready to publish, and follow-up results awaiting acknowledgment.
+- **Observability.** LangSmith and OpenTelemetry tracing are optional. Trace content capture is disabled by default.
 
 ## 🧱 Technology stack
 
@@ -53,7 +53,7 @@ The patient portal supports clinician binding, follow-up consultation, and evide
 | --- | --- |
 | Backend | Java 17, Spring Boot 3.3.0, Spring AI OpenAI Starter 1.0.0-M6, LangGraph4j 1.5.14 |
 | Frontend | React 18.3, Vite 5, STOMP WebSocket |
-| Data and infrastructure | PostgreSQL + pgvector, Redis, Neo4j, Docker Compose |
+| Data and infrastructure | PostgreSQL + pgvector, Flyway, Redis, Neo4j, Docker Compose |
 | Observability and documents | OpenTelemetry, LangSmith (optional), PDFBox, Apache POI |
 
 ## 🚀 Local development
@@ -61,32 +61,33 @@ The patient portal supports clinician binding, follow-up consultation, and evide
 ### Prerequisites
 
 - Java 17 and Maven
-- Node.js 20 (used by the frontend build)
-- Docker Compose v2 (to run PostgreSQL, Redis, and Neo4j)
-- `API_KEY` and `OPENAI_API_KEY` for the complete diagnosis workflow; add `MIMO_API_KEY` when using the Treatment Agent.
+- Node.js 20 for the frontend
+- PostgreSQL with pgvector, Redis, and Neo4j reachable from the machine running Maven
+- `API_KEY` and `OPENAI_API_KEY` for the complete diagnosis workflow. Configure `MIMO_API_KEY` to use MiMo for treatment suggestions.
 
 ### 1. Start the supporting services
 
-From the repository root:
+The local defaults use PostgreSQL at `localhost:5432`, Redis at `127.0.0.1:6379`, and Neo4j at `bolt://localhost:7687`. Create the `medconsenus` business database and prepare the separate `vector_db` database with pgvector. Flyway creates and upgrades the business tables at application startup. Hibernate validates the schema.
 
-```bash
-docker compose -f docker/deploy/docker-compose.yml up -d postgres redis neo4j
-```
-
-On an empty PostgreSQL volume, the initialization script creates the business tables, the `vector_db` database, and its pgvector table. Existing volumes are not reinitialized automatically.
+The deployment Compose file exposes these three services only inside the Compose network. To run Maven on the host with those containers, publish their ports to loopback in a local Compose override or point the application at other host-reachable services. The PostgreSQL container initializes the vector database and embedding table on its first start with an empty data volume. [Compose configuration](docker/deploy/docker-compose.yml)
 
 ### 2. Start the backend
 
-Set model keys in the backend shell (never commit real keys), then run:
+From the repository root, set the service credentials in the shell that runs Maven. This Bash example assumes both PostgreSQL databases use the same account.
 
 ```bash
+export POSTGRES_USER=postgres
+export POSTGRES_PASSWORD=your_postgres_password
+export PGVECTOR_USER="$POSTGRES_USER"
+export PGVECTOR_PASSWORD="$POSTGRES_PASSWORD"
+export NEO4J_PASSWORD=your_neo4j_password
 export API_KEY=your_dashscope_api_key
 export OPENAI_API_KEY=your_openai_api_key
 export MIMO_API_KEY=your_mimo_api_key       # optional
 mvn spring-boot:run
 ```
 
-The backend listens on port `8086`. Check its health endpoint:
+The backend listens on port `8086`. Check its health endpoint from another terminal.
 
 ```bash
 curl http://127.0.0.1:8086/actuator/health
@@ -94,7 +95,7 @@ curl http://127.0.0.1:8086/actuator/health
 
 ### 3. Start the frontend
 
-In a second terminal:
+From the repository root in a separate terminal, start Vite.
 
 ```bash
 cd frontend
@@ -102,15 +103,18 @@ npm ci
 npm run dev
 ```
 
-Open `http://localhost:5173`. Vite proxies `/api` and `/ws` to `http://127.0.0.1:8086`.
+Open [the local workspace](http://localhost:5173). Choose **Doctor** or **Patient**, then sign in or register with a phone number and password. Vite proxies `/api` and `/ws` to `http://127.0.0.1:8086`.
 
-Build frontend assets into the Spring Boot static-resource directory:
+WeChat and QQ offer OAuth sign-in. After role selection, the login page shows the providers enabled for this deployment. On first authorization, enter the phone number and password of an existing local account for that role to link it. Subsequent authorizations open the linked workspace.
+
+Run the frontend tests and build the assets served by Spring Boot from `frontend/`.
 
 ```bash
+node --test
 npm run build
 ```
 
-Run the backend test suite from the repository root:
+To run the backend tests from the same shell, return to the repository root.
 
 ```bash
 cd ..
@@ -119,31 +123,36 @@ mvn test
 
 ## ⚙️ Configuration
 
-The main configuration lives in `src/main/resources/application.yml`. Inject these values through the environment in deployed environments:
+Override application defaults with environment variables. [Application configuration](src/main/resources/application.yml)
 
 | Variable | Purpose |
 | --- | --- |
-| `API_KEY` | DashScope-compatible API for Collector, Reviewers, Decision, Embedding, and related agents |
-| `OPENAI_API_KEY` | GPT diagnosis/review and vision models |
-| `MIMO_API_KEY` | Treatment Agent |
+| `API_KEY` | DashScope-compatible Collector, reviewer, Decision, and embedding models |
+| `OPENAI_API_KEY` | GPT diagnosis, review, and vision models |
+| `MIMO_API_KEY` | MiMo treatment suggestions |
 | `SPRING_DATASOURCE_URL`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | PostgreSQL business database |
-| `REDIS_HOST`, `REDIS_PORT` | Redis sessions and diagnosis snapshots |
+| `PGVECTOR_HOST`, `PGVECTOR_PORT`, `PGVECTOR_DATABASE`, `PGVECTOR_USER`, `PGVECTOR_PASSWORD` | Separate vector database connection |
+| `REDIS_HOST`, `REDIS_PORT` | Redis locks, report explanation history, and legacy session migration |
 | `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD` | Medical knowledge graph |
+| `WECHAT_LOGIN_ENABLED`, `QQ_LOGIN_ENABLED` | Enable WeChat or QQ website login independently. Both default to `false`. |
 | `LANGSMITH_ENABLED`, `LANGSMITH_API_KEY` | Optional LangSmith tracing |
 
-For Docker Compose deployment, create `docker/deploy/.env` with the required values. This file contains secrets and must stay out of version control. Before deployment, verify that `PGVECTOR_DATABASE` matches the `vector_db` database initialized by `docker/postgres/init/01-init.sql`, and adjust the nginx static-directory mount to your server path.
+To enable a login provider, register a website application, set its app ID and server-side secret, and configure the public HTTPS callback for the same site. The deployment guide lists the variables and callback paths for both providers. [WeChat and QQ deployment settings](docs/deployment.md#启用微信或-qq-网站登录)
+
+For a Compose deployment, set the required environment variables, verify the vector database name, and point the nginx static-directory mount at the frontend build on your server. [Deployment guide](docs/deployment.md)
 
 ## 🔌 Common endpoints
 
 | Area | Paths |
 | --- | --- |
 | Authentication | `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/auth/me`, `POST /api/auth/logout` |
+| WeChat and QQ sign-in | `GET /api/auth/social/providers`, `GET /api/auth/social/{provider}/start`, `POST /api/auth/social/bind` |
 | Clinician workspace | `/api/workspace/patients`, `/api/workspace/sessions`, `/api/workspace/consultations`, `/api/workspace/doctor-review` |
 | Patient portal | `/api/patient/dashboard`, `/api/patient/consultations`, `/api/patient/reports/{reportId}/explanations` |
 | Collaboration | `/api/workspace/collaboration`, `/api/workspace/diagnosis-records/{recordId}/publish` |
+| Publications and evidence | `/api/patient/reports/{recordId}/revisions`, `/api/evidence/reports/{reportId}/revisions/{revision}` |
+| Follow-up | `/api/workspace/diagnosis-records/{id}/publish-with-follow-up`, `/api/patient/follow-ups`, `/api/workspace/follow-ups` |
 | Live progress | STOMP `/ws/diagnosis`, subscribe to `/user/queue/pipeline` |
-
-See the [project guide](docs/project-guide.md) for the full route and data-model reference.
 
 ## 🗂️ Repository layout
 
@@ -151,6 +160,7 @@ See the [project guide](docs/project-guide.md) for the full route and data-model
 frontend/                         React + Vite frontend
 src/main/java/com/zyt/medconsensus
   agent/ graph/ graphkg/ rag/     Agents, workflow, graph, and vector storage/import
+  auth/social/                    WeChat and QQ provider clients and settings
   controller/ service/            REST controllers and orchestration
   llm/ observability/             Model gateway and tracing
 src/main/resources/               Spring configuration, migrations, and static assets
@@ -160,8 +170,8 @@ docs/                             Project and deployment guides
 
 ## 📚 Documentation and contribution
 
-- [Project guide](docs/project-guide.md): modules, workflow, endpoints, storage, and development conventions.
-- [Deployment guide](docs/deployment.md): Compose deployment, environment variables, health checks, backups, and troubleshooting.
+- Explore the workflow, endpoints, storage, and development conventions in the [project guide](docs/project-guide.md).
+- Configure Compose, provider credentials, health checks, and backups with the [deployment guide](docs/deployment.md).
 - Issues and pull requests are welcome. Preserve clinician-review language when changing medical recommendation flows.
 
 ## 📄 License

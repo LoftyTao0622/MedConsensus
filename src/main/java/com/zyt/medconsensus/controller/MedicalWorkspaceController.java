@@ -24,6 +24,7 @@ import com.zyt.medconsensus.mapper.FinalDiagnosisRecordMapper;
 import com.zyt.medconsensus.mapper.PatientBasicInfoMapper;
 import com.zyt.medconsensus.observability.LangSmithTracingService;
 import com.zyt.medconsensus.service.CaseImportService;
+import com.zyt.medconsensus.service.EvidenceSourceService;
 import com.zyt.medconsensus.service.CollectorAgentService;
 import com.zyt.medconsensus.service.PatientSkillService;
 import com.zyt.medconsensus.service.MedicalFileUploadValidator;
@@ -66,7 +67,9 @@ public class MedicalWorkspaceController {
     private final MedicalGraphReasoningService graphReasoningService;
 
     private final MedicalFileUploadValidator fileUploadValidator;
+    private final EvidenceSourceService evidenceSources;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public MedicalWorkspaceController(
             SimpMessagingTemplate messagingTemplate,
             CollectorAgentService collectorAgentService,
@@ -76,7 +79,7 @@ public class MedicalWorkspaceController {
             PatientSkillService patientSkillService,
             CaseImportService caseImportService,
             MedicalGraphReasoningService graphReasoningService,
-            MedicalFileUploadValidator fileUploadValidator
+            MedicalFileUploadValidator fileUploadValidator, EvidenceSourceService evidenceSources
     ) {
         this.messagingTemplate = messagingTemplate;
         this.collectorAgentService = collectorAgentService;
@@ -87,6 +90,7 @@ public class MedicalWorkspaceController {
         this.caseImportService = caseImportService;
         this.graphReasoningService = graphReasoningService;
         this.fileUploadValidator = fileUploadValidator;
+        this.evidenceSources = evidenceSources;
     }
 
     /** Backward-compatible constructor for standalone controller tests. */
@@ -102,7 +106,7 @@ public class MedicalWorkspaceController {
     ) {
         this(messagingTemplate, collectorAgentService, patientBasicInfoMapper, finalDiagnosisRecordMapper,
                 tracingService, patientSkillService, caseImportService, graphReasoningService,
-                new MedicalFileUploadValidator());
+                new MedicalFileUploadValidator(), null);
     }
 
     @GetMapping("/patients")
@@ -115,6 +119,13 @@ public class MedicalWorkspaceController {
         return patientBasicInfoMapper.findByDoctorId(doctorId, request).stream()
                 .map(this::toPatientDto)
                 .toList();
+    }
+
+    @GetMapping("/patients/{patientId}")
+    public PatientBasicInfoDto patient(@PathVariable Long patientId, HttpSession session) {
+        return patientBasicInfoMapper.findByIdAndDoctorId(patientId, currentUserId(session))
+                .map(this::toPatientDto)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "报告关联的患者档案不存在"));
     }
 
     @PostMapping("/patients")
@@ -176,7 +187,7 @@ public class MedicalWorkspaceController {
         return Map.of(
                 "success", true,
                 "sessionId", sessionId,
-                "message", "过去会话消息已成功删除"
+                "message", "会话已归档"
         );
     }
 
@@ -191,6 +202,14 @@ public class MedicalWorkspaceController {
             HttpSession session
     ) {
         Long userId = currentUserId(session);
+        request.setPatientAccountId(null);
+        if (request.getPatientRecordId() != null) {
+            PatientBasicInfo patient = patientBasicInfoMapper.findByIdAndDoctorId(request.getPatientRecordId(), userId)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "患者档案不存在"));
+            request.setPatientAccountId(patient.getPatientAccountId());
+            request.setPatientName(patient.getPatientName());
+        }
+        if (request.getMedicalEvidenceId() != null) evidenceSources.prepareDoctorUpload(userId, request);
         return collectorAgentService.organize(userId, request);
     }
 
@@ -257,11 +276,23 @@ public class MedicalWorkspaceController {
     @PostMapping("/medical-evidence/analyze")
     public MedicalEvidenceAnalysisResponse analyzeMedicalEvidence(
             @RequestParam("file") MultipartFile file,
+            @RequestParam(required = false) Long patientRecordId,
+            @RequestParam(required = false) String sessionId,
             HttpSession session
     ) throws IOException {
-        currentUserId(session);
+        Long doctorId = currentUserId(session);
+        if (patientRecordId != null && patientBasicInfoMapper.findByIdAndDoctorId(patientRecordId, doctorId).isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "未找到患者档案");
+        }
+        if (sessionId != null) {
+            Long sessionChart = collectorAgentService.loadSessionDetail(doctorId, sessionId).patientRecordId();
+            if (patientRecordId != null && !patientRecordId.equals(sessionChart)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "所选档案与已有会话不一致");
+            }
+            patientRecordId = sessionChart;
+        }
         fileUploadValidator.validate(file);
-        return caseImportService.analyzeMedicalEvidence(file);
+        return caseImportService.analyzeMedicalEvidence(doctorId, null, null, patientRecordId, sessionId, file);
     }
 
     @GetMapping("/diagnosis-records")

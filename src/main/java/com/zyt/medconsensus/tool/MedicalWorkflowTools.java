@@ -61,12 +61,16 @@ public class MedicalWorkflowTools {
     }
 
     public VotingResult vote(List<Map<String, Object>> reviewers, double primaryConfidence, RiskResult risk) {
-        double weighted = reviewers.stream()
+        List<Map<String, Object>> valid = reviewers.stream()
+                .filter(item -> "VALID".equals(item.get("status")) && asDouble(item.get("weight")) > 0)
+                .toList();
+        double weight = valid.stream().mapToDouble(item -> asDouble(item.get("weight"))).sum();
+        double weighted = valid.stream()
                 .mapToDouble(item -> asDouble(item.get("score")) * asDouble(item.get("weight")))
                 .sum();
-        double finalConfidence = (weighted * 0.65) + (primaryConfidence * 0.35);
+        double finalConfidence = weight > 0 ? 0.65 * weighted / weight + 0.35 * primaryConfidence : primaryConfidence;
         String route;
-        if (risk.highRisk() || finalConfidence < 0.75) {
+        if (risk.highRisk() || valid.size() < 2 || finalConfidence < 0.75) {
             route = "human_review";
         } else {
             route = "finalize";

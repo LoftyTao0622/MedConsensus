@@ -3,6 +3,9 @@ package com.zyt.medconsensus.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zyt.medconsensus.dto.CaseImportResponse;
+import com.zyt.medconsensus.dto.ChatSessionDto;
+import com.zyt.medconsensus.dto.DiagnosticResponse;
+import com.zyt.medconsensus.mapper.ConsultationSessionStore;
 import com.zyt.medconsensus.dto.FinalDiagnosisRecordDto;
 import com.zyt.medconsensus.dto.MedicalEvidenceAnalysisResponse;
 import com.zyt.medconsensus.dto.PatientBasicInfoDto;
@@ -51,6 +54,7 @@ public class CaseImportService {
               "confidence": 置信度（0.0到1.0之间的数字）,
               "treatmentAdvice": "治疗建议",
               "summary": "资料内容摘要（100字以内）",
+              "citations": [{"finding":"逐字复制对应的关键数值、检验结果、影像所见或印象条目","quote":"该条目在原件中的原文","page":对应图片页序号从1开始，未知填null}],
               "doctorReviewRequired": true
             }
             不要把影像识别结果作为最终诊断；无法判断的字段使用空字符串或空数组。
@@ -81,6 +85,7 @@ public class CaseImportService {
               "confidence": 置信度（0.0到1.0之间的数字）,
               "treatmentAdvice": "治疗建议",
               "summary": "资料内容摘要（100字以内）",
+              "citations": [{"finding":"逐字复制对应的关键数值、检验结果、影像所见或印象条目","quote":"该条目在原件中的原文","page":对应图片页序号从1开始，未知填null}],
               "doctorReviewRequired": true
             }
             不要把影像识别结果作为最终诊断；无法判断的字段使用空字符串或空数组。
@@ -90,36 +95,46 @@ public class CaseImportService {
     private final MultiModelGateway modelGateway;
     private final DocumentParsingService documentParsingService;
     private final PatientBasicInfoMapper patientBasicInfoMapper;
+    private final ConsultationSessionStore sessions;
     private final FinalDiagnosisRecordMapper finalDiagnosisRecordMapper;
     private final PatientSkillService patientSkillService;
     private final AiWorkflowProperties properties;
     private final ObjectMapper objectMapper;
+    private final EvidenceSourceService sources;
 
     public CaseImportService(
             MultiModelGateway modelGateway,
             DocumentParsingService documentParsingService,
             PatientBasicInfoMapper patientBasicInfoMapper,
             FinalDiagnosisRecordMapper finalDiagnosisRecordMapper,
+            ConsultationSessionStore sessions,
             PatientSkillService patientSkillService,
             AiWorkflowProperties properties,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper, EvidenceSourceService sources
     ) {
         this.modelGateway = modelGateway;
         this.documentParsingService = documentParsingService;
         this.patientBasicInfoMapper = patientBasicInfoMapper;
         this.finalDiagnosisRecordMapper = finalDiagnosisRecordMapper;
+        this.sessions = sessions;
         this.patientSkillService = patientSkillService;
         this.properties = properties;
         this.objectMapper = objectMapper;
+        this.sources = sources;
     }
 
-    @Transactional
+    @Transactional(rollbackFor = IOException.class)
     public CaseImportResponse importCase(Long doctorId, MultipartFile file) throws IOException {
         JsonNode result = analyzeFile(file);
 
         PatientBasicInfo patient = createPatient(doctorId, result);
-        FinalDiagnosisRecord record = createDiagnosisRecord(doctorId, result);
+        FinalDiagnosisRecord record = createDiagnosisRecord(doctorId, patient.getId(), result);
 
+        var source = sources.save(doctorId, null, record.getSessionId(), patient.getId(), record.getSessionId(), file, result, formatEvidenceForAgent(result));
+        var session = new ChatSessionDto(record.getSessionId(), patient.getPatientName(), "待医生定夺", null, source.fileName());
+        var diagnosis = new DiagnosticResponse(record.getAiConclusion(), record.getConfidence(), record.getRiskLevel(),
+                List.of(), List.of(), List.of());
+        sessions.appendTurn(doctorId, patient.getId(), session, record.getChiefComplaint(), List.of(), diagnosis);
         patientSkillService.recordPatientProfile(patient, true);
 
         PatientBasicInfoDto patientDto = toPatientDto(patient);
@@ -129,16 +144,18 @@ public class CaseImportService {
         return new CaseImportResponse(patientDto, recordDto, summary, "病例导入成功");
     }
 
-    public MedicalEvidenceAnalysisResponse analyzeMedicalEvidence(MultipartFile file) throws IOException {
+    public MedicalEvidenceAnalysisResponse analyzeMedicalEvidence(Long doctorId, Long patientId, String sessionId, Long expectedChart, String expectedSession, MultipartFile file) throws IOException {
         JsonNode result = analyzeFile(file);
         String summary = result.has("summary") ? result.get("summary").asText("") : "";
+        String text = formatEvidenceForAgent(result);
+        var source = sources.save(doctorId, patientId, sessionId, expectedChart, expectedSession, file, result, text);
         return new MedicalEvidenceAnalysisResponse(
-                file.getOriginalFilename(),
+                source.fileName(),
                 result,
-                formatEvidenceForAgent(result),
+                text,
                 summary,
                 "PENDING_REVIEW",
-                "检查资料识别成功，请医生确认后再提交给诊断 Agent"
+                "检查资料识别成功，请医生确认后再提交给诊断 Agent", source
         );
     }
 
@@ -180,7 +197,7 @@ public class CaseImportService {
 
         List<String> pageImages;
         try (InputStream is = file.getInputStream()) {
-            pageImages = documentParsingService.renderPdfPagesToPngDataUrls(is, 4);
+            pageImages = documentParsingService.renderPdfPagesToPngDataUrls(is, EvidenceLocations.PDF_IMAGE_LIMIT);
         }
 
         if (!pageImages.isEmpty()) {
@@ -267,9 +284,10 @@ public class CaseImportService {
         return patientBasicInfoMapper.save(patient);
     }
 
-    private FinalDiagnosisRecord createDiagnosisRecord(Long doctorId, JsonNode result) {
+    private FinalDiagnosisRecord createDiagnosisRecord(Long doctorId, Long patientRecordId, JsonNode result) {
         FinalDiagnosisRecord record = new FinalDiagnosisRecord();
         record.setUserId(doctorId);
+        record.setPatientRecordId(patientRecordId);
         record.setSessionId("import-" + UUID.randomUUID().toString().substring(0, 8));
         record.setChiefComplaint(getTextOrDefault(result, "chiefComplaint", ""));
         String diagnosis = diagnosisText(result);
