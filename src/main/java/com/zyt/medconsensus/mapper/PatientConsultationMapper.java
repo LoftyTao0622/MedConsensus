@@ -22,6 +22,7 @@ public interface PatientConsultationMapper extends JpaRepository<PatientConsulta
     @Query("""
             update PatientConsultation consultation
             set consultation.status = :nextStatus,
+                consultation.updatedAt = CURRENT_TIMESTAMP,
                 consultation.version = consultation.version + 1
             where consultation.id = :consultationId
               and consultation.patientAccountId = :patientAccountId
@@ -39,6 +40,7 @@ public interface PatientConsultationMapper extends JpaRepository<PatientConsulta
     @Query("""
             update PatientConsultation consultation
             set consultation.evidenceStatus = :nextEvidenceStatus,
+                consultation.updatedAt = CURRENT_TIMESTAMP,
                 consultation.status = :nextStatus,
                 consultation.version = consultation.version + 1
             where consultation.id = :consultationId
@@ -58,6 +60,7 @@ public interface PatientConsultationMapper extends JpaRepository<PatientConsulta
     @Query("""
             update PatientConsultation consultation
             set consultation.status = :nextStatus,
+                consultation.updatedAt = CURRENT_TIMESTAMP,
                 consultation.version = consultation.version + 1
             where consultation.doctorId = :doctorId
               and consultation.sessionId = :sessionId

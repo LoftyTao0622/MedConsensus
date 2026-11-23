@@ -8,5 +8,6 @@ public record MedicalEvidenceAnalysisResponse(
         String evidenceText,
         String summary,
         String status,
-        String message
+        String message,
+        EvidenceSource source
 ) {}

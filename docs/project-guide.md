@@ -77,7 +77,7 @@ MedConsensus
 | --- | --- |
 | `agent` | Collector、Diagnosis、Reviewer、Treatment 等大模型 Agent |
 | `graph` | LangGraph 工作流状态对象 |
-| `service.impl.CollectorAgentServiceImpl` | 核心诊断流程编排，负责状态流转、Redis 会话、诊断快照、医生复核 |
+| `service.impl.CollectorAgentServiceImpl` | 编排诊断和医生复核，将完整会话保存到 PostgreSQL，用 Redis 锁协调并发提交 |
 | `llm.MultiModelGateway` | 多模型调用网关，按不同 Agent 配置模型、base URL、temperature |
 | `tool.MedicalWorkflowTools` | 风险评估、信息充分性判断、投票、治疗关键词抽取等工具逻辑 |
 | `graphkg` | Neo4j 医学知识图谱抽取、写入与推理查询 |
@@ -122,6 +122,10 @@ PostgreSQL 主要表：
 | `patient_basic_info` | 医生名下患者基础信息 |
 | `disease_medicine` | 疾病和药品建议基础库 |
 | `final_diagnosis_record` | 医生复核后的最终诊断和治疗建议 |
+| `consultation_session` | 按医生和会话保存患者档案关联、问诊消息及最新诊断；归档后保留详情 |
+| `report_publication` | 每次发布时保存的报告版本，患者从这里读取报告和解释依据 |
+| `medical_evidence_source`、`publication_evidence` | 上传原件、识别范围、原文定位、校正内容及各报告版本采用的资料 |
+| `report_follow_up` | 关联报告版本的复诊日期、待补检查、患者反馈和医生查看状态 |
 
 pgvector 库：
 
@@ -129,7 +133,7 @@ pgvector 库：
 | --- | --- |
 | `vector_db.medical_embedding` | 医疗语料切片、metadata、1024 维 embedding |
 
-Redis 主要 key：
+升级时，服务会尝试从以下旧 Redis key 迁移尚存的会话数据。已经过期的消息无法恢复。患者长期画像从新档案编号开始记录，原有按姓名存放的文件保留在原处，系统不会自动将它们归入同名档案。
 
 ```text
 medconsenus:collector:sessions:{userId}
@@ -149,9 +153,9 @@ Neo4j：
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| `POST` | `/api/auth/register` | 医生注册，并写入 HTTP Session |
-| `POST` | `/api/auth/login` | 医生登录 |
-| `GET` | `/api/auth/me` | 获取当前登录医生 |
+| `POST` | `/api/auth/register` | 注册医生或患者账号，必填 `role`（`DOCTOR` 或 `PATIENT`） |
+| `POST` | `/api/auth/login` | 使用所选角色、手机号和密码登录，角色缺失或无效时返回 400 |
+| `GET` | `/api/auth/me` | 获取当前会话的账号。缺少有效身份时返回 401，需要重新登录 |
 | `POST` | `/api/auth/logout` | 退出登录 |
 
 工作台接口：
@@ -164,7 +168,7 @@ Neo4j：
 | `DELETE` | `/api/workspace/patients/{patientId}` | 删除患者 |
 | `GET` | `/api/workspace/sessions` | 查询会话列表 |
 | `GET` | `/api/workspace/sessions/{sessionId}` | 查询会话详情 |
-| `DELETE` | `/api/workspace/sessions/{sessionId}` | 删除会话 |
+| `DELETE` | `/api/workspace/sessions/{sessionId}` | 将会话从工作台列表归档，保留已发布报告和历史消息 |
 | `GET` | `/api/workspace/diagnosis` | 获取最近诊断结果 |
 | `POST` | `/api/workspace/consultations` | 提交咨询内容，触发多 Agent 诊断流程 |
 | `POST` | `/api/workspace/doctor-review` | 提交医生复核意见并生成最终记录 |
@@ -179,6 +183,10 @@ WebSocket：
 | 用途 | 推送 Collector、Diagnosis、Reviewer、Decision、Human Review 等流程进度 |
 
 ## 7. 前端说明
+
+医生在“医患协作”的问诊待办中按待核资料、待复核、待发布或待看随访筛选。确认检查资料前可以打开原件，核对识别页与检验数值，保存校正后再送入诊断。无法定位的条目会显示相应提示。
+
+医生发布报告时可勾选“安排复诊随访”，填写复诊日期和待补检查。患者在该报告下提交检查结果或病情变化，医生在“待看随访”中对照原报告并确认已阅。修订报告需要重新发布，原随访仍对应创建时的报告版本。
 
 前端是 React + Vite 单页应用，主要模块：
 
@@ -239,7 +247,7 @@ LANGSMITH_CAPTURE_CONTENT=false
 - 业务编排放在 Service，尤其是诊断工作流相关逻辑。
 - 大模型调用统一走 `MultiModelGateway`。
 - 新增数据库表时优先补充 JPA Entity，同时为 Docker 初始化或迁移脚本补齐 SQL。
-- 会话型临时数据放 Redis，最终诊断和医生确认结果落 PostgreSQL。
+- PostgreSQL 持久保存完整问诊；模型读取最近 40 条上下文，Redis 仍用于锁与患者报告解释缓存。
 - 医疗建议相关文案要保留医生复核语义，避免表现为自动诊断或自动处方。
 
 ## 11. 已知注意点
@@ -247,6 +255,6 @@ LANGSMITH_CAPTURE_CONTENT=false
 - 项目配置名中多处使用 `MedConsenus` 拼写，这是当前代码和 Redis key 的既有命名，改名会影响配置、日志、key 和部署变量，需单独规划。
 - `docker/deploy/.env` 是本地敏感配置文件，不要提交。
 - `docker/postgres/init/01-init.sql` 只在 PostgreSQL volume 首次创建时执行。
-- `final_diagnosis_record` 目前由 JPA `ddl-auto: update` 自动建表，生产环境长期建议改为显式迁移脚本。
+- Flyway 管理 `final_diagnosis_record` 等业务表的结构，Hibernate 在启动时校验映射。
 - Neo4j 推理失败会降级为空证据，不会中断诊断流程。
 

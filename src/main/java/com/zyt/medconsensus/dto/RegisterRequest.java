@@ -6,6 +6,7 @@ import java.math.BigDecimal;
 
 public class RegisterRequest {
 
+    @NotBlank(message = "请选择医生或患者身份")
     private String role;
 
     @NotBlank

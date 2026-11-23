@@ -9,6 +9,7 @@ public record SessionDetailResponse(
         String updatedAt,
         DiagnosticResponse diagnosis,
         List<MessageHistoryDto> history,
-        FinalDiagnosisRecordDto finalRecord
+        FinalDiagnosisRecordDto finalRecord,
+        Long patientRecordId
 ) {
 }

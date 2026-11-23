@@ -20,6 +20,8 @@ import com.zyt.medconsensus.dto.PatientDashboardResponse;
 import com.zyt.medconsensus.dto.PatientExplanationChatDto;
 import com.zyt.medconsensus.dto.PatientMessageRequest;
 import com.zyt.medconsensus.dto.PatientReportDto;
+import com.zyt.medconsensus.dto.ReportRevisionDto;
+import com.zyt.medconsensus.mapper.ReportPublicationStore;
 import com.zyt.medconsensus.dto.SessionDetailResponse;
 import com.zyt.medconsensus.entity.DoctorBasicInfo;
 import com.zyt.medconsensus.entity.DoctorPatientRelation;
@@ -83,6 +85,7 @@ public class PatientPortalServiceImpl implements PatientPortalService {
     private final DoctorPatientRelationMapper relationMapper;
     private final PatientBasicInfoMapper patientBasicInfoMapper;
     private final PatientConsultationMapper consultationMapper;
+    private final ReportPublicationStore publications;
     private final FinalDiagnosisRecordMapper finalDiagnosisRecordMapper;
     private final CollectorAgentService collectorAgentService;
     private final CaseImportService caseImportService;
@@ -100,6 +103,7 @@ public class PatientPortalServiceImpl implements PatientPortalService {
             PatientBasicInfoMapper patientBasicInfoMapper,
             PatientConsultationMapper consultationMapper,
             FinalDiagnosisRecordMapper finalDiagnosisRecordMapper,
+            ReportPublicationStore publications,
             CollectorAgentService collectorAgentService,
             CaseImportService caseImportService,
             PatientSkillService patientSkillService,
@@ -115,6 +119,7 @@ public class PatientPortalServiceImpl implements PatientPortalService {
         this.patientBasicInfoMapper = patientBasicInfoMapper;
         this.consultationMapper = consultationMapper;
         this.finalDiagnosisRecordMapper = finalDiagnosisRecordMapper;
+        this.publications = publications;
         this.collectorAgentService = collectorAgentService;
         this.caseImportService = caseImportService;
         this.patientSkillService = patientSkillService;
@@ -138,8 +143,7 @@ public class PatientPortalServiceImpl implements PatientPortalService {
                 .stream()
                 .map(this::toPatientConsultationDto)
                 .toList();
-        List<PatientReportDto> reports = finalDiagnosisRecordMapper
-                .findByPatientAccountIdAndPublishedToPatientTrueOrderByPublishedAtDesc(patientAccountId)
+        List<PatientReportDto> reports = publications.latestForPatient(patientAccountId)
                 .stream()
                 .map(this::toPatientReportDto)
                 .toList();
@@ -256,6 +260,7 @@ public class PatientPortalServiceImpl implements PatientPortalService {
     }
 
     @Override
+    @Transactional(rollbackFor = IOException.class)
     public MedicalEvidenceAnalysisResponse uploadEvidence(
             Long patientAccountId,
             Long consultationId,
@@ -266,7 +271,10 @@ public class PatientPortalServiceImpl implements PatientPortalService {
             PatientConsultation consultation = consultationMapper
                     .findByIdAndPatientAccountId(consultationId, patientAccountId)
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "未找到该问诊"));
-            MedicalEvidenceAnalysisResponse analysis = caseImportService.analyzeMedicalEvidence(file);
+            MedicalEvidenceAnalysisResponse analysis = caseImportService.analyzeMedicalEvidence(
+                    consultation.getDoctorId(), patientAccountId, consultation.getSessionId(),
+                    consultation.getPatientRecordId(), consultation.getSessionId(), file);
+            consultation.setEvidenceSourceId(analysis.source().id());
             consultation.setEvidenceStatus(EVIDENCE_PENDING);
             consultation.setEvidenceFileName(analysis.fileName());
             consultation.setEvidenceText(analysis.evidenceText());
@@ -280,10 +288,11 @@ public class PatientPortalServiceImpl implements PatientPortalService {
 
     @Override
     public PatientExplanationChatDto loadExplanationHistory(Long patientAccountId, Long reportId) {
-        requirePublishedReport(patientAccountId, reportId);
+        var report = requirePublishedReport(patientAccountId, reportId);
         return new PatientExplanationChatDto(
                 reportId,
-                readExplanationHistory(patientAccountId, reportId)
+                readExplanationHistory(patientAccountId, reportId, report.revision()),
+                report.revision()
         );
     }
 
@@ -293,9 +302,12 @@ public class PatientPortalServiceImpl implements PatientPortalService {
             Long reportId,
             PatientMessageRequest request
     ) {
-        FinalDiagnosisRecord report = requirePublishedReport(patientAccountId, reportId);
+        ReportRevisionDto report = requirePublishedReport(patientAccountId, reportId);
+        if (request.expectedRevision() != null && request.expectedRevision() != report.revision()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "报告已发布更正版本，请刷新报告后继续");
+        }
         List<MessageHistoryDto> history = new java.util.ArrayList<>(
-                readExplanationHistory(patientAccountId, reportId)
+                readExplanationHistory(patientAccountId, reportId, report.revision())
         );
         String question = request.message().trim();
 
@@ -313,8 +325,8 @@ public class PatientPortalServiceImpl implements PatientPortalService {
                     history.subList(history.size() - EXPLANATION_HISTORY_LIMIT, history.size())
             );
         }
-        writeExplanationHistory(patientAccountId, reportId, history);
-        return new PatientExplanationChatDto(reportId, history);
+        writeExplanationHistory(patientAccountId, reportId, report.revision(), history);
+        return new PatientExplanationChatDto(reportId, history, report.revision());
     }
 
     @Override
@@ -394,6 +406,7 @@ public class PatientPortalServiceImpl implements PatientPortalService {
                     "患者已补充检查资料，请结合本轮问诊继续评估。"
             );
             request.setMedicalEvidence(consultation.getEvidenceText());
+            request.setMedicalEvidenceId(consultation.getEvidenceSourceId());
             request.setMedicalEvidenceFileName(consultation.getEvidenceFileName());
             request.setMedicalEvidenceConfirmed(true);
 
@@ -437,10 +450,14 @@ public class PatientPortalServiceImpl implements PatientPortalService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "医患绑定已失效，不能发布报告");
         }
 
+        if (!"AI_CONFIRMED".equals(record.getReviewStatus()) && !"DOCTOR_OVERRIDDEN".equals(record.getReviewStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "请医生先确认报告内容");
+        }
         int published = finalDiagnosisRecordMapper.publishIfUnpublished(recordId, doctorId, OffsetDateTime.now());
         if (published == 0) {
             return Map.of("success", true, "message", "报告已经发布给患者", "recordId", recordId);
         }
+        publications.append(recordId);
         consultationMapper.transitionSessionStatus(doctorId, record.getSessionId(), "REPORT_PUBLISHED");
         return Map.of("success", true, "message", "报告已发布给患者", "recordId", recordId);
     }
@@ -453,6 +470,7 @@ public class PatientPortalServiceImpl implements PatientPortalService {
     ) {
         ConsultationRequest request = new ConsultationRequest();
         request.setPatientAccountId(patient.getId());
+        request.setPatientRecordId(patientRecord.getId());
         request.setSessionId(sessionId);
         request.setMessage(message.trim());
         request.setPatientName(patient.getPatientName());
@@ -478,7 +496,7 @@ public class PatientPortalServiceImpl implements PatientPortalService {
                 patientQuestion(detail, consultation.getStatus()),
                 consultation.getEvidenceStatus(),
                 consultation.getEvidenceFileName(),
-                finalRecord != null && finalRecord.publishedToPatient(),
+                finalRecord != null && publications.latest(finalRecord.id(),consultation.getPatientAccountId()).isPresent(),
                 patientConversation(detail, consultation.getStatus()),
                 consultation.getUpdatedAt() == null ? null : consultation.getUpdatedAt().toString()
         );
@@ -500,7 +518,9 @@ public class PatientPortalServiceImpl implements PatientPortalService {
                 consultation.getEvidenceStatus(),
                 consultation.getEvidenceFileName(),
                 consultation.getEvidenceText(),
+                consultation.getEvidenceSourceId(),
                 record != null,
+                record == null ? null : record.getId(),
                 record != null && record.isPublishedToPatient(),
                 consultation.getUpdatedAt() == null ? null : consultation.getUpdatedAt().toString()
         );
@@ -524,31 +544,27 @@ public class PatientPortalServiceImpl implements PatientPortalService {
         );
     }
 
-    private PatientReportDto toPatientReportDto(FinalDiagnosisRecord record) {
-        DoctorBasicInfo doctor = doctorBasicInfoMapper.findById(record.getUserId()).orElse(null);
-        return new PatientReportDto(
-                record.getId(),
-                record.getSessionId(),
-                doctor == null ? "医生" : doctor.getUsername(),
-                doctor == null ? null : doctor.getDepartment(),
-                doctor == null ? null : doctor.getTitle(),
-                record.getChiefComplaint(),
-                record.getFinalConclusion(),
-                record.getDoctorOpinion(),
-                record.getRiskLevel(),
-                record.getTreatmentAdvice(),
-                record.getPublishedAt() == null ? null : record.getPublishedAt().toString()
-        );
+    @Override
+    public List<ReportRevisionDto> doctorReportRevisions(Long doctorId, Long recordId) {
+        return publications.forDoctor(recordId, doctorId);
     }
 
-    private FinalDiagnosisRecord requirePublishedReport(Long patientAccountId, Long reportId) {
-        requirePatient(patientAccountId);
-        return finalDiagnosisRecordMapper
-                .findByIdAndPatientAccountIdAndPublishedToPatientTrue(reportId, patientAccountId)
-                .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.NOT_FOUND,
-                        "未找到已发布给你的诊断报告"
-                ));
+    @Override
+    public List<ReportRevisionDto> patientReportRevisions(Long patientId, Long recordId) {
+        return publications.forPatient(recordId, patientId);
+    }
+
+    private PatientReportDto toPatientReportDto(ReportRevisionDto report) {
+        DoctorBasicInfo doctor = doctorBasicInfoMapper.findById(report.doctorId()).orElse(null);
+        return new PatientReportDto(report.recordId(), report.sessionId(),
+                doctor == null ? "医生" : doctor.getUsername(), doctor == null ? null : doctor.getDepartment(),
+                doctor == null ? null : doctor.getTitle(), report.chiefComplaint(), report.finalConclusion(),
+                report.doctorOpinion(), report.riskLevel(), report.treatmentAdvice(), report.publishedAt().toString(), report.revision());
+    }
+
+    private ReportRevisionDto requirePublishedReport(Long patientAccountId, Long reportId) {
+        return publications.latest(reportId, patientAccountId).orElseThrow(() ->
+                new ResponseStatusException(HttpStatus.NOT_FOUND, "未找到已发布给你的诊断报告"));
     }
 
     private MultiModelGateway.ModelSpec patientExplanationSpec() {
@@ -561,12 +577,12 @@ public class PatientPortalServiceImpl implements PatientPortalService {
         );
     }
 
-    private String reportContext(FinalDiagnosisRecord report) {
-        return "主诉：" + textOrDefault(report.getChiefComplaint(), "未记录")
-                + "\n医生最终结论：" + textOrDefault(report.getFinalConclusion(), "未记录")
-                + "\n医生说明：" + textOrDefault(report.getDoctorOpinion(), "医生确认诊断结论")
-                + "\n风险等级：" + textOrDefault(report.getRiskLevel(), "未记录")
-                + "\n已发布治疗与复诊建议：" + textOrDefault(report.getTreatmentAdvice(), "未记录");
+    private String reportContext(ReportRevisionDto report) {
+        return "主诉：" + textOrDefault(report.chiefComplaint(), "未记录")
+                + "\n医生最终结论：" + textOrDefault(report.finalConclusion(), "未记录")
+                + "\n医生说明：" + textOrDefault(report.doctorOpinion(), "医生确认诊断结论")
+                + "\n风险等级：" + textOrDefault(report.riskLevel(), "未记录")
+                + "\n已发布治疗与复诊建议：" + textOrDefault(report.treatmentAdvice(), "未记录");
     }
 
     private String formatExplanation(PatientExplanationAgent.ExplanationOutcome outcome) {
@@ -581,9 +597,9 @@ public class PatientPortalServiceImpl implements PatientPortalService {
         return builder.toString();
     }
 
-    private List<MessageHistoryDto> readExplanationHistory(Long patientAccountId, Long reportId) {
+    private List<MessageHistoryDto> readExplanationHistory(Long patientAccountId, Long reportId, int revision) {
         auditLog.info("session_read userId={} reportId={} resource=explanation", patientAccountId, reportId);
-        String value = redisTemplate.opsForValue().get(explanationHistoryKey(patientAccountId, reportId));
+        String value = redisTemplate.opsForValue().get(explanationHistoryKey(patientAccountId, reportId, revision));
         if (!StringUtils.hasText(value)) {
             return List.of();
         }
@@ -597,13 +613,14 @@ public class PatientPortalServiceImpl implements PatientPortalService {
     private void writeExplanationHistory(
             Long patientAccountId,
             Long reportId,
+            int revision,
             List<MessageHistoryDto> history
     ) {
         try {
             List<MessageHistoryDto> bounded = history.size() <= MAX_EXPLANATION_MESSAGES
                     ? history : new java.util.ArrayList<>(history.subList(history.size() - MAX_EXPLANATION_MESSAGES, history.size()));
             redisTemplate.opsForValue().set(
-                    explanationHistoryKey(patientAccountId, reportId),
+                    explanationHistoryKey(patientAccountId, reportId, revision),
                     objectMapper.writeValueAsString(bounded), EXPLANATION_TTL
             );
             auditLog.info("session_write userId={} reportId={} resource=explanation count={}", patientAccountId, reportId, bounded.size());
@@ -612,8 +629,8 @@ public class PatientPortalServiceImpl implements PatientPortalService {
         }
     }
 
-    private String explanationHistoryKey(Long patientAccountId, Long reportId) {
-        return "medconsenus:patient:report-explanation:" + patientAccountId + ":" + reportId;
+    private String explanationHistoryKey(Long patientAccountId, Long reportId, int revision) {
+        return "medconsenus:patient:report-explanation:" + patientAccountId + ":" + reportId + (revision == 1 ? "" : ":v" + revision);
     }
 
     private <T> T withConsultationLock(Long consultationId, Supplier<T> action) {
@@ -661,7 +678,8 @@ public class PatientPortalServiceImpl implements PatientPortalService {
     }
 
     private String patientQuestion(SessionDetailResponse detail, String status) {
-        if (!"NEEDS_PATIENT_REPLY".equals(status) || detail == null) {
+        if (!"NEEDS_PATIENT_REPLY".equals(status) || detail == null
+                || !("待补充信息".equals(detail.status()) || "NEEDS_PATIENT_REPLY".equals(detail.status()))) {
             return null;
         }
         if (detail.diagnosis() != null
@@ -684,19 +702,18 @@ public class PatientPortalServiceImpl implements PatientPortalService {
         if (detail == null || detail.history() == null) {
             return List.of();
         }
-        if ("NEEDS_PATIENT_REPLY".equals(status)) {
-            return detail.history();
+        // 历史记录还包括医生工作台的未发布结论，只有追问能直接在患者端展示。
+        List<MessageHistoryDto> messages = new java.util.ArrayList<>(detail.history().stream()
+                .filter(item -> "user".equals(item.role()) || item.patientQuestion()).toList());
+        String question = patientQuestion(detail, status);
+        if (question != null) {
+            if (detail.history().isEmpty() || !detail.history().get(detail.history().size() - 1).patientQuestion()) {
+                messages.add(new MessageHistoryDto("assistant", question, true));
+            }
+        } else {
+            messages.add(new MessageHistoryDto("assistant",
+                    "本轮病情信息已收集并提交医生审核。医生完成复核并发布后，你可以在诊断报告中查看最终结论。"));
         }
-
-        List<MessageHistoryDto> messages = new java.util.ArrayList<>(
-                detail.history().stream()
-                        .filter(item -> "user".equals(item.role()))
-                        .toList()
-        );
-        messages.add(new MessageHistoryDto(
-                "assistant",
-                "本轮病情信息已收集并提交医生审核。医生完成复核并发布后，你可以在诊断报告中查看最终结论。"
-        ));
         return messages;
     }
 

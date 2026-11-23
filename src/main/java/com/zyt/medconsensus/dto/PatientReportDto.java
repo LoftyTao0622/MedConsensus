@@ -11,6 +11,7 @@ public record PatientReportDto(
         String doctorOpinion,
         String riskLevel,
         String treatmentAdvice,
-        String publishedAt
+        String publishedAt,
+        int revision
 ) {
 }

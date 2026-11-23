@@ -7,7 +7,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.text.Normalizer;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -32,23 +31,17 @@ public class PatientSkillService {
     }
 
     public String loadSkill(ConsultationRequest request) {
-        String patientName = request == null ? null : request.getPatientName();
-        if (!StringUtils.hasText(patientName)) {
+        if (request == null || request.getPatientRecordId() == null) {
             return "";
         }
 
-        Path path = skillPath(request.getPatientAccountId(), patientName);
+        Path path = skillPath(request.getPatientRecordId());
         if (!Files.exists(path)) {
             return "";
         }
 
         try {
             String content = Files.readString(path, StandardCharsets.UTF_8);
-            if (request.getPatientAccountId() != null
-                    && content.contains("Patient Account ID:")
-                    && !content.contains("Patient Account ID: " + request.getPatientAccountId())) {
-                return "";
-            }
             if (content.length() <= MAX_SKILL_CHARS) {
                 return content;
             }
@@ -85,14 +78,14 @@ public class PatientSkillService {
             List<String> structuredAnalysis,
             DiagnosticResponse diagnosis
     ) {
-        if (request == null || !StringUtils.hasText(request.getPatientName())) {
+        if (request == null || request.getPatientRecordId() == null) {
             return;
         }
 
         lock.lock();
         try {
             Files.createDirectories(skillDirectory);
-            Path path = skillPath(request.getPatientAccountId(), request.getPatientName());
+            Path path = skillPath(request.getPatientRecordId());
             if (!Files.exists(path)) {
                 Files.writeString(path, initialSkillDocument(request), StandardCharsets.UTF_8);
             }
@@ -105,26 +98,19 @@ public class PatientSkillService {
         }
     }
 
-    public Path skillPath(String patientName) {
-        return skillPath(null, patientName);
-    }
-
-    public Path skillPath(Long patientAccountId, String patientName) {
-        String key = patientAccountId != null
-                ? "patient-account-" + patientAccountId
-                : "patient-name-" + toEnglishFileName(patientName);
-        return skillDirectory.resolve(key + ".md").normalize();
+    private Path skillPath(Long patientRecordId) {
+        return skillDirectory.resolve("patient-record-" + patientRecordId + ".md");
     }
 
     public void recordPatientProfile(PatientBasicInfo patient, boolean created) {
-        if (patient == null || !StringUtils.hasText(patient.getPatientName())) {
+        if (patient == null || patient.getId() == null) {
             return;
         }
 
         lock.lock();
         try {
             Files.createDirectories(skillDirectory);
-            Path path = skillPath(patient.getPatientAccountId(), patient.getPatientName());
+            Path path = skillPath(patient.getId());
             if (!Files.exists(path)) {
                 Files.writeString(path, initialSkillDocument(patient), StandardCharsets.UTF_8);
             }
@@ -305,18 +291,6 @@ public class PatientSkillService {
         }
 
         return String.join("\n", categories);
-    }
-
-    private String toEnglishFileName(String patientName) {
-        String normalized = Normalizer.normalize(textOrDefault(patientName, "patient"), Normalizer.Form.NFD)
-                .replaceAll("\\p{M}", "")
-                .toLowerCase(Locale.ROOT)
-                .replaceAll("[^a-z0-9]+", "-")
-                .replaceAll("(^-+|-+$)", "");
-        if (StringUtils.hasText(normalized)) {
-            return normalized;
-        }
-        return "patient-" + Integer.toHexString(patientName.hashCode());
     }
 
     private void addFact(List<String> facts, String label, String value) {

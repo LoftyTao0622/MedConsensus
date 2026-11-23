@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, FilePenLine, Eye, Pill, Plus, Trash2, X, Printer, Upload, Loader2 } from "lucide-react";
+import { Archive, Check, FilePenLine, Eye, Pill, Plus, Trash2, X, Printer, Upload, Loader2 } from "lucide-react";
 
 const blankPatientDraft = {
   id: null,
@@ -14,7 +14,6 @@ const blankPatientDraft = {
 export function Sidebar({
   patient,
   patients,
-  onPatientChange,
   onSelectPatient,
   onSavePatient,
   onDeletePatient,
@@ -67,8 +66,7 @@ export function Sidebar({
 
   async function handlePatientSubmit(event) {
     event.preventDefault();
-    const savedPatient = await onSavePatient(patientDraft);
-    onPatientChange(savedPatient);
+    await onSavePatient(patientDraft);
     setEditingPatient(false);
   }
 
@@ -251,6 +249,7 @@ export function Sidebar({
 
           <textarea
             className="consultation-textarea"
+            disabled={consultationSubmitting}
             value={consultationInput}
             onChange={(event) => onConsultationInputChange(event.target.value)}
             placeholder={
@@ -282,7 +281,7 @@ export function Sidebar({
             <button
               className="evidence-upload-button"
               type="button"
-              disabled={!patient?.id || medicalEvidenceAnalyzing}
+              disabled={(!patient?.id && !activeSessionId) || medicalEvidenceAnalyzing || consultationSubmitting}
               onClick={() => evidenceInputRef.current?.click()}
             >
               {medicalEvidenceAnalyzing ? <Loader2 size={16} className="spin" /> : <Upload size={16} />}
@@ -346,10 +345,11 @@ export function Sidebar({
                 <button
                   className="ghost-icon danger"
                   type="button"
-                  aria-label="删除"
+                  aria-label="归档会话"
+                  title="归档会话，保留报告和问诊记录"
                   onClick={() => onDeleteSession(session.id)}
                 >
-                  <Trash2 size={16} />
+                  <Archive size={16} />
                 </button>
               </div>
             </article>
@@ -389,6 +389,7 @@ export function Sidebar({
           className="primary-button full"
           type="button"
           onClick={onGeneratePrescription}
+          disabled={!finalRecord?.treatmentAdvice}
           style={{ marginTop: "14px" }}
         >
           <Printer size={16} />

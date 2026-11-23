@@ -3,7 +3,6 @@ package com.zyt.medconsensus.agent;
 import com.zyt.medconsensus.agent.schema.ReviewerResultSchema;
 import com.zyt.medconsensus.llm.MultiModelGateway;
 import com.zyt.medconsensus.llm.validation.LlmJsonValidator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.springframework.stereotype.Component;
@@ -32,8 +31,7 @@ public class ReviewerAgent {
             double weight,
             String chiefComplaint,
             String collectorSummary,
-            String preliminaryConclusion,
-            double fallbackScore
+            String preliminaryConclusion
     ) {
         String content = modelGateway.chat(
                 modelSpec,
@@ -46,32 +44,23 @@ public class ReviewerAgent {
                 ))
         );
 
-        ReviewerOutcome outcome = parseReviewerOutcome(content, fallbackScore);
-        Map<String, Object> reviewer = new LinkedHashMap<>();
-        reviewer.put("name", displayName);
-        reviewer.put("score", outcome.score());
-        reviewer.put("weight", weight);
-        reviewer.put("comment", outcome.comment());
-        return reviewer;
-    }
-
-    private ReviewerOutcome parseReviewerOutcome(String content, double fallbackScore) {
         if (!StringUtils.hasText(content)) {
-            return new ReviewerOutcome(fallbackScore, "模型未返回有效评审内容，沿用主模型置信度。");
+            return absent(displayName, weight, "模型未返回评审内容");
         }
-
         try {
             ReviewerResultSchema result = llmJsonValidator.parseAndValidate(content, ReviewerResultSchema.class);
-            return new ReviewerOutcome(result.score(), result.comment().trim());
+            return Map.of("name", displayName, "weight", weight, "status", "VALID",
+                    "score", result.score(), "comment", result.comment().trim());
         } catch (Exception exception) {
-            return new ReviewerOutcome(fallbackScore, "评审 JSON 解析失败，沿用主模型置信度。");
+            return absent(displayName, weight, "评审内容格式或分数无效");
         }
+    }
+
+    public static Map<String, Object> absent(String name, double weight, String reason) {
+        return Map.of("name", name, "weight", weight, "status", "ABSENT", "comment", reason);
     }
 
     private String textOrDefault(String value, String fallback) {
         return StringUtils.hasText(value) ? value.trim() : fallback;
-    }
-
-    private record ReviewerOutcome(double score, String comment) {
     }
 }

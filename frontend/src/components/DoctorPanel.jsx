@@ -11,6 +11,7 @@ export function DoctorPanel({
   onGenerateReport,
   feedback,
   submitting,
+  finalRecord,
   reportDisabled
 }) {
   const disabled = submitting || !activeSessionId || !diagnosis;
@@ -52,6 +53,7 @@ export function DoctorPanel({
         </div>
       ) : null}
 
+      {finalRecord && <div className="feedback-box">当前复核结论：{finalRecord.finalConclusion}<br />{finalRecord.publishedToPatient ? "已发布。修改后可在医患协作中发布新版本。" : "已保存复核记录。"}</div>}
       <textarea
         className="doctor-textarea"
         value={opinion}
@@ -66,9 +68,9 @@ export function DoctorPanel({
           确认 AI 诊断 (无异议)
         </button>
 
-        <button className="primary-button full" type="button" onClick={onSubmit} disabled={disabled}>
+        <button className="primary-button full" type="button" onClick={onSubmit} disabled={disabled || !opinion.trim()}>
           <SendHorizonal size={18} />
-          提交我的意见
+          {finalRecord ? "保存修订意见" : "提交我的意见"}
         </button>
 
         <button
@@ -78,7 +80,7 @@ export function DoctorPanel({
           disabled={reportDisabled}
         >
           <FileText size={18} />
-          生成诊断报告
+          {finalRecord ? "导出医生复核报告" : "导出待复核草稿"}
         </button>
       </div>
 

@@ -22,7 +22,9 @@ import com.zyt.medconsensus.graphkg.MedicalGraphPath;
 import com.zyt.medconsensus.graphkg.MedicalGraphReasoningService;
 import com.zyt.medconsensus.llm.AiWorkflowProperties;
 import com.zyt.medconsensus.llm.MultiModelGateway;
+import com.zyt.medconsensus.mapper.ConsultationSessionStore;
 import com.zyt.medconsensus.mapper.DiseaseMedicineMapper;
+import org.springframework.transaction.support.TransactionTemplate;
 import com.zyt.medconsensus.mapper.FinalDiagnosisRecordMapper;
 import com.zyt.medconsensus.mapper.PatientConsultationMapper;
 import com.zyt.medconsensus.observability.LangSmithTracingService;
@@ -33,11 +35,9 @@ import com.zyt.medconsensus.tool.MedicalWorkflowTools;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -45,23 +45,16 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.dao.DataAccessException;
 import org.bsc.langgraph4j.CompiledGraph;
 import org.bsc.langgraph4j.StateGraph;
 import org.bsc.langgraph4j.action.AsyncEdgeAction;
 import org.bsc.langgraph4j.action.AsyncNodeAction;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
-import org.springframework.data.redis.core.Cursor;
-import org.springframework.data.redis.core.RedisCallback;
-import org.springframework.data.redis.core.ScanOptions;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -70,9 +63,6 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
 
     private static final Logger auditLog = LoggerFactory.getLogger("medical.session.audit");
     private static final int MAX_HISTORY_MESSAGES = 40;
-    private static final long HISTORY_TTL_SECONDS = 7 * 24 * 60 * 60L;
-    private static final DefaultRedisScript<Long> ATOMIC_JSON_SET = new DefaultRedisScript<>(
-            "redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2]); return 1", Long.class);
 
     private static final String NODE_COLLECT = "collect";
     private static final String NODE_ASSESS = "assess";
@@ -85,12 +75,6 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
 
     private static final int RECOMMENDED_MEDICINE_LIMIT = 2;
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("MM-dd HH:mm");
-    private static final TypeReference<List<SessionSnapshot>> SESSION_LIST_TYPE = new TypeReference<>() {
-    };
-    private static final TypeReference<List<MessageSnapshot>> MESSAGE_LIST_TYPE = new TypeReference<>() {
-    };
-    private static final TypeReference<DiagnosticResponse> DIAGNOSIS_TYPE = new TypeReference<>() {
-    };
     private static final TypeReference<List<String>> STRING_LIST_TYPE = new TypeReference<>() {
     };
 
@@ -101,7 +85,8 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
     private final DiagnosisAgent diagnosisAgent;
     private final ReviewerAgent reviewerAgent;
     private final TreatmentAgent treatmentAgent;
-    private final StringRedisTemplate redisTemplate;
+    private final ConsultationSessionStore sessions;
+    private final TransactionTemplate transactions;
     private final ObjectMapper objectMapper;
     private final PipelineEventPublisher pipelineEventPublisher;
     private final DiseaseMedicineMapper diseaseMedicineMapper;
@@ -122,7 +107,8 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
             DiagnosisAgent diagnosisAgent,
             ReviewerAgent reviewerAgent,
             TreatmentAgent treatmentAgent,
-            StringRedisTemplate redisTemplate,
+            ConsultationSessionStore sessions,
+            TransactionTemplate transactions,
             ObjectMapper objectMapper,
             PipelineEventPublisher pipelineEventPublisher,
             DiseaseMedicineMapper diseaseMedicineMapper,
@@ -141,7 +127,8 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         this.diagnosisAgent = diagnosisAgent;
         this.reviewerAgent = reviewerAgent;
         this.treatmentAgent = treatmentAgent;
-        this.redisTemplate = redisTemplate;
+        this.sessions = sessions;
+        this.transactions = transactions;
         this.objectMapper = objectMapper;
         this.pipelineEventPublisher = pipelineEventPublisher;
         this.diseaseMedicineMapper = diseaseMedicineMapper;
@@ -153,7 +140,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         this.reviewerExecutor = reviewerExecutor;
         this.redissonClient = redissonClient;
         this.workflow = compileWorkflow();
-        // One normal pass already visits multiple nodes; allow room for a retry_collect round-trip.
+        // 为重新收集信息预留一次完整的工作流迭代。
         this.workflow.setMaxIterations(16);
     }
 
@@ -194,9 +181,14 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
                 request.getMedicalEvidenceFileName()
         );
 
-        List<MessageSnapshot> history = loadMessageSnapshots(userId, resolvedSessionId);
-        history.add(new MessageSnapshot("user", workflowMessage));
-        saveMessageSnapshots(userId, resolvedSessionId, history);
+        var previous = sessions.get(userId, resolvedSessionId).orElse(null);
+        if (previous != null && !java.util.Objects.equals(previous.patientRecordId(), request.getPatientRecordId())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "当前患者档案与问诊记录不一致");
+        }
+        List<MessageHistoryDto> prior = previous == null ? List.of() : previous.history();
+        List<MessageHistoryDto> history = new ArrayList<>(prior.subList(Math.max(0, prior.size() - MAX_HISTORY_MESSAGES + 1), prior.size()));
+        MessageHistoryDto patientMessage = new MessageHistoryDto("user", workflowMessage);
+        history.add(patientMessage);
 
         String patientSkill = patientSkillService.buildCurrentContext(request, patientSkillService.loadSkill(request));
 
@@ -218,20 +210,14 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
                         .orElseThrow(() -> new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "工作流执行失败"))
         );
 
-        SessionSnapshot sessionSnapshot = upsertSession(
-                userId,
-                resolvedSessionId,
+        ChatSessionDto session = new ChatSessionDto(resolvedSessionId,
                 sessionTitle(request.getPatientName(), result.value("title", summarizeTitle(workflowMessage))),
-                result.value("sessionStatus", "病情整理中"),
-                LocalDateTime.now().format(TIME_FORMATTER),
-                StringUtils.hasText(request.getMedicalEvidenceFileName())
-                        ? request.getMedicalEvidenceFileName()
-                        : currentEvidenceFileName(userId, resolvedSessionId)
-        );
-
+                result.value("sessionStatus", "病情整理中"), LocalDateTime.now().format(TIME_FORMATTER),
+                StringUtils.hasText(request.getMedicalEvidenceFileName()) ? request.getMedicalEvidenceFileName()
+                        : previous == null ? null : previous.evidenceFileName());
         String assistantMessage = result.value("finalConclusion", "已完成病情整理。");
-        history.add(new MessageSnapshot("assistant", assistantMessage));
-        saveMessageSnapshots(userId, resolvedSessionId, history);
+        MessageHistoryDto reply = new MessageHistoryDto("assistant", assistantMessage, "待补充信息".equals(session.status()));
+        history.add(reply);
 
         List<String> analysis = stringListValue(result, "structuredAnalysis");
         List<String> suggestions = stringListValue(result, "suggestions");
@@ -245,7 +231,10 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
                 suggestions,
                 reviewers
         );
-        saveDiagnosisSnapshot(userId, resolvedSessionId, diagnosis);
+        String chiefComplaint = result.value("chiefComplaint", workflowMessage);
+        sessions.appendTurn(userId, request.getPatientRecordId(), session, chiefComplaint, List.of(patientMessage, reply), diagnosis,
+                request.getMedicalEvidenceId(), request.getMedicalEvidence());
+        auditLog.info("session_write userId={} sessionId={} resource=messages count={}", userId, resolvedSessionId, 2);
         patientSkillService.recordConsultation(
                 userId,
                 resolvedSessionId,
@@ -257,16 +246,10 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
 
         return new ConsultationResponse(
                 resolvedSessionId,
-                result.value("chiefComplaint", workflowMessage),
-                new ChatSessionDto(
-                        sessionSnapshot.id(),
-                        sessionSnapshot.title(),
-                        sessionSnapshot.status(),
-                        sessionSnapshot.updatedAt(),
-                        sessionSnapshot.evidenceFileName()
-                ),
+                chiefComplaint,
+                session,
                 diagnosis,
-                history.stream().map(MessageSnapshot::content).toList()
+                history.stream().map(MessageHistoryDto::content).toList()
         );
     }
 
@@ -290,9 +273,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
             return List.of();
         }
 
-        return loadSessionSnapshots(userId).stream()
-                .map(item -> new ChatSessionDto(item.id(), item.title(), item.status(), item.updatedAt(), item.evidenceFileName()))
-                .toList();
+        return sessions.list(userId);
     }
 
     @Override
@@ -301,7 +282,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
             return List.of();
         }
 
-        return loadMessageSnapshots(userId, sessionId).stream()
+        return sessions.get(userId, sessionId).map(ConsultationSessionStore.Session::history).orElse(List.of()).stream()
                 .map(message -> message.role().toUpperCase() + ": " + message.content())
                 .toList();
     }
@@ -312,11 +293,8 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "当前未登录");
         }
 
-        return loadSessionSnapshots(userId).stream()
-                .map(session -> loadDiagnosisSnapshot(userId, session.id()))
-                .filter(java.util.Objects::nonNull)
-                .findFirst()
-                .orElseGet(this::emptyDiagnosis);
+        DiagnosticResponse latest = sessions.latestDiagnosis(userId);
+        return latest == null ? emptyDiagnosis() : latest;
     }
 
     @Override
@@ -325,19 +303,21 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "会话不存在");
         }
 
-        SessionSnapshot snapshot = loadSessionSnapshots(userId).stream()
-                .filter(item -> item.id().equals(sessionId))
-                .findFirst()
+        var snapshot = sessions.get(userId, sessionId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "未找到会话"));
-
-        List<MessageHistoryDto> history = loadMessageSnapshots(userId, sessionId).stream()
-                .map(item -> new MessageHistoryDto(item.role(), item.content()))
-                .toList();
-
-        DiagnosticResponse diagnosis = loadDiagnosisSnapshot(userId, sessionId);
+        auditLog.info("session_read userId={} sessionId={} resource=messages", userId, sessionId);
+        List<MessageHistoryDto> history = snapshot.history();
+        DiagnosticResponse diagnosis = snapshot.diagnosis();
         FinalDiagnosisRecordDto finalRecord = finalDiagnosisRecordMapper.findByUserIdAndSessionId(userId, sessionId)
                 .map(this::toFinalRecordDto)
                 .orElse(null);
+
+        if (diagnosis == null && finalRecord != null && StringUtils.hasText(finalRecord.aiConclusion())) {
+            // 老版本仅长期保存最终报告，可利用该报告中的原初诊字段重新打开复核。
+            diagnosis = new DiagnosticResponse(finalRecord.aiConclusion(),
+                    finalRecord.confidence() == null ? 0d : finalRecord.confidence(),
+                    finalRecord.riskLevel(), List.of(), List.of(), List.of());
+        }
 
         return new SessionDetailResponse(
                 snapshot.id(),
@@ -346,7 +326,8 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
                 snapshot.updatedAt(),
                 diagnosis,
                 history,
-                finalRecord
+                finalRecord,
+                snapshot.patientRecordId()
         );
     }
 
@@ -359,64 +340,71 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "缺少会话标识");
         }
 
-        FinalDiagnosisRecord record = finalDiagnosisRecordMapper.findByUserIdAndSessionId(userId, request.getSessionId())
-                .orElseGet(FinalDiagnosisRecord::new);
+        return withSessionLock(userId, request.getSessionId(), () -> transactions.execute(
+                ignored -> saveDoctorReviewLocked(userId, request)));
+    }
 
+    private FinalDiagnosisRecordDto saveDoctorReviewLocked(Long userId, DoctorReviewRequest request) {
+        String sessionId = request.getSessionId();
+        FinalDiagnosisRecord record = finalDiagnosisRecordMapper.findByUserIdAndSessionId(userId, sessionId)
+                .orElseGet(FinalDiagnosisRecord::new);
+        var session = sessions.get(userId, sessionId).orElse(null);
+        DiagnosticResponse diagnosis = session == null ? null : session.diagnosis();
+        if (session != null && ("待补充信息".equals(session.status()) || "NEEDS_PATIENT_REPLY".equals(session.status()))) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "请先完成问诊并生成待复核的结论");
+        }
+        if (diagnosis == null && !StringUtils.hasText(record.getAiConclusion())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "未找到可复核的诊断结果");
+        }
+        String aiConclusion = diagnosis == null ? record.getAiConclusion() : diagnosis.conclusion();
+        if (!java.util.Objects.equals(aiConclusion, request.getAiConclusion())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "待复核结论已更新，请刷新问诊详情");
+        }
+        String chiefComplaint = session != null && StringUtils.hasText(session.chiefComplaint())
+                ? session.chiefComplaint() : record.getChiefComplaint();
+        String riskLevel = diagnosis == null ? record.getRiskLevel() : diagnosis.riskLevel();
+        Double confidence = diagnosis == null ? record.getConfidence() : Double.valueOf(diagnosis.confidence());
+        String opinion = blankToNull(request.getOpinion());
+        String finalConclusion = opinion == null ? aiConclusion : opinion;
+        String reviewStatus = opinion == null ? "AI_CONFIRMED" : "DOCTOR_OVERRIDDEN";
+        if (reviewStatus.equals(record.getReviewStatus()) && java.util.Objects.equals(record.getChiefComplaint(), chiefComplaint)
+                && java.util.Objects.equals(record.getAiConclusion(), aiConclusion)
+                && java.util.Objects.equals(record.getFinalConclusion(), finalConclusion)
+                && java.util.Objects.equals(record.getRiskLevel(), riskLevel)
+                && java.util.Objects.equals(record.getConfidence(), confidence)) {
+            return toFinalRecordDto(record);
+        }
         record.setUserId(userId);
-        record.setSessionId(request.getSessionId());
-        record.setChiefComplaint(request.getChiefComplaint());
-        record.setAiConclusion(request.getAiConclusion());
-        record.setDoctorOpinion(blankToNull(request.getOpinion()));
-        String finalConclusion = StringUtils.hasText(request.getOpinion())
-                ? request.getOpinion().trim()
-                : request.getAiConclusion();
+        record.setSessionId(sessionId);
+        if (session != null) record.setPatientRecordId(session.patientRecordId());
+        record.setChiefComplaint(chiefComplaint);
+        record.setAiConclusion(aiConclusion);
+        record.setRiskLevel(riskLevel);
+        record.setConfidence(confidence);
+        record.setDoctorOpinion(opinion);
         record.setFinalConclusion(finalConclusion);
-        record.setRiskLevel(request.getRiskLevel());
-        record.setConfidence(request.getConfidence());
-        record.setReviewStatus(StringUtils.hasText(request.getOpinion()) ? "DOCTOR_OVERRIDDEN" : "AI_CONFIRMED");
-        var patientConsultation = patientConsultationMapper
-                .findByDoctorIdAndSessionId(userId, request.getSessionId())
-                .orElse(null);
+        record.setReviewStatus(reviewStatus);
+        record.setPublishedToPatient(false);
+        record.setPublishedAt(null);
+        var patientConsultation = patientConsultationMapper.findByDoctorIdAndSessionId(userId, sessionId).orElse(null);
         if (patientConsultation != null) {
             record.setPatientAccountId(patientConsultation.getPatientAccountId());
             record.setPatientRecordId(patientConsultation.getPatientRecordId());
         }
-
-        return withSessionLock(
-                userId,
-                request.getSessionId(),
-                () -> saveDoctorReviewLocked(userId, request, record, patientConsultation)
-        );
-    }
-
-    private FinalDiagnosisRecordDto saveDoctorReviewLocked(
-            Long userId,
-            DoctorReviewRequest request,
-            FinalDiagnosisRecord record,
-            com.zyt.medconsensus.entity.PatientConsultation patientConsultation
-    ) {
         emit(userId, request.getSessionId(), "TREATMENT", "Treatment Agent 正在根据医生最终诊断生成开药说明", 100);
         TreatmentAgent.TreatmentOutcome treatment = buildTreatmentAdvice(record);
         record.setTreatmentKeywords(writeJsonString(treatment.keywords()));
         record.setTreatmentSource(treatment.source());
         record.setTreatmentAdvice(treatment.advice());
 
-        FinalDiagnosisRecord saved = finalDiagnosisRecordMapper.save(record);
+        FinalDiagnosisRecord saved = finalDiagnosisRecordMapper.saveAndFlush(record);
         if (patientConsultation != null) {
             patientConsultationMapper.transitionSessionStatus(userId, request.getSessionId(), "REPORT_READY");
         }
-        upsertSession(
-                userId,
-                request.getSessionId(),
-                currentSessionTitle(userId, request.getSessionId(), "已完成诊断"),
-                "已形成最终结论",
-                LocalDateTime.now().format(TIME_FORMATTER),
-                currentEvidenceFileName(userId, request.getSessionId())
-        );
+        sessions.saveReviewStatus(userId, sessionId, record.getPatientRecordId(), record.getChiefComplaint());
         return toFinalRecordDto(saved);
     }
 
-    @Transactional
     @Override
     public void deleteSession(Long userId, String sessionId) {
         if (userId == null) {
@@ -427,31 +415,11 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         }
 
         withSessionLock(userId, sessionId, () -> {
-            deleteSessionLocked(userId, sessionId);
+            if (!sessions.archive(userId, sessionId)) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "未找到会话");
+            }
             return null;
         });
-    }
-
-    private void deleteSessionLocked(Long userId, String sessionId) {
-        List<SessionSnapshot> sessions = new ArrayList<>(loadSessionSnapshots(userId));
-        boolean removed = sessions.removeIf(session -> session.id().equals(sessionId));
-        if (!removed) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "未找到会话");
-        }
-
-        if (sessions.isEmpty()) {
-            redisTemplate.delete(sessionKey(userId));
-        } else {
-            writeJson(sessionKey(userId), sessions);
-        }
-
-        try {
-            deleteRedisSessionArtifacts(userId, sessionId);
-        } catch (DataAccessException exception) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Redis 会话删除失败");
-        }
-
-        finalDiagnosisRecordMapper.deleteByUserIdAndSessionId(userId, sessionId);
     }
 
     private CompiledGraph<DiagnosisGraphState> compileWorkflow() {
@@ -474,6 +442,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
                     AsyncEdgeAction.edge_async(state -> state.value("assessmentRoute", "more_info")),
                     Map.of(
                             "more_info", NODE_ASK_MORE,
+                            "human_review", NODE_HUMAN,
                             "sufficient", NODE_DIAGNOSE
                     )
             );
@@ -519,7 +488,11 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
             updates.put("collectorSummary", result.summary());
             updates.put("structuredAnalysis", result.structuredAnalysis());
             updates.put("followUpQuestions", result.followUpQuestions());
-            updates.put("riskLevel", tools.assessRisk(String.join(" ", memory)).riskLevel());
+            String patientHistory = memory.stream().filter(message -> message.startsWith("患者："))
+                    .collect(java.util.stream.Collectors.joining(" "));
+            var risk = tools.assessRisk(patientHistory + " " + result.summary());
+            updates.put("riskLevel", risk.riskLevel());
+            updates.put("ruleHighRisk", risk.highRisk());
             return updates;
         });
     }
@@ -534,6 +507,12 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
             Map<String, Object> updates = new LinkedHashMap<>();
             updates.put("sufficient", result.sufficient());
             updates.put("assessmentRoute", result.sufficient() ? "sufficient" : "more_info");
+            if (!result.sufficient() && state.value("ruleHighRisk", false)) {
+                updates.put("assessmentRoute", "human_review");
+                updates.put("riskLevel", "高风险");
+                updates.put("preliminaryConclusion", "当前资料提示高风险且信息不足，已提交医生复核。");
+                updates.put("finalConfidence", 0d);
+            }
             updates.put("missingItems", result.missingItems());
             updates.put("informationSufficiencyAnalysis", informationSufficiencyAnalysis(result));
             return updates;
@@ -707,19 +686,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
                     state
             );
 
-            List<Map<String, Object>> reviewers;
-            try {
-                reviewers = CompletableFuture.allOf(gpt, kimi, glm)
-                        .thenApply(unused -> List.of(gpt.join(), kimi.join(), glm.join()))
-                        .get(90, TimeUnit.SECONDS);
-            } catch (TimeoutException e) {
-                System.err.println("[Reviewer] 并行评审超时(90s)，降级为单模型结果");
-                reviewers = List.of();
-            } catch (Exception e) {
-                System.err.println("[Reviewer] 并行评审异常: " + e.getMessage());
-                reviewers = List.of();
-            }
-
+            List<Map<String, Object>> reviewers = List.of(gpt.join(), kimi.join(), glm.join());
             return Map.of("reviewers", reviewers);
         });
     }
@@ -730,11 +697,14 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
 
             List<Map<String, Object>> reviewers = reviewerStateListValue(state, "reviewers");
             MedicalWorkflowTools.RiskResult risk =
-                    tools.assessRisk(state.value("collectorSummary", state.userMessage()));
+                    tools.assessRisk(state.userMessage() + " " + state.value("collectorSummary", ""));
+            if (state.value("ruleHighRisk", false) || "高风险".equals(state.value("riskLevel", ""))) {
+                risk = new MedicalWorkflowTools.RiskResult("高风险", 0.92d, true);
+            }
             MedicalWorkflowTools.VotingResult voting =
                     tools.vote(reviewers, state.value("preliminaryConfidence", 0.5d), risk);
 
-            String decisionHint = modelGateway.chat(
+            String decisionHint = voting.route().equals("human_review") ? "human_review" : modelGateway.chat(
                     decisionSpec(),
                     """
                             你是 Decision Layer，请根据主诊断结论、Reviewer 评分和风险等级判断下一步路线。
@@ -768,7 +738,7 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
                     "finalConclusion", state.value("preliminaryConclusion", "系统建议转人工审核。"),
                     "structuredAnalysis", appendSuggestion(
                             state.value("structuredAnalysis", List.of()),
-                            "当前 AI 初步诊断已保留并提交给医生，即使置信度偏低也需由医生结合病历最终定夺。"
+                            "请医生结合病历原文、风险因素与有效评审意见进行复核。"
                     ),
                     "suggestions", appendSuggestion(
                             state.value("suggestions", List.of()),
@@ -794,28 +764,31 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
             AiWorkflowProperties.Reviewer reviewer,
             DiagnosisGraphState state
     ) {
-        return CompletableFuture.supplyAsync(() -> {
-            return reviewerAgent.review(
-                    displayName,
-                    reviewerSpec(reviewer),
-                    reviewer.getWeight(),
-                    state.value("chiefComplaint", ""),
-                    state.value("collectorSummary", ""),
-                    state.value("preliminaryConclusion", ""),
-                    state.value("preliminaryConfidence", 0.5d)
-            );
-        }, reviewerExecutor);
+        double weight = reviewer.getWeight();
+        try {
+            return CompletableFuture.supplyAsync(() -> reviewerAgent.review(displayName, reviewerSpec(reviewer),
+                            weight, state.value("chiefComplaint", ""), state.value("collectorSummary", ""),
+                            state.value("preliminaryConclusion", "")), reviewerExecutor)
+                    .orTimeout(90, TimeUnit.SECONDS)
+                    .exceptionally(error -> ReviewerAgent.absent(displayName, weight,
+                            error instanceof TimeoutException ? "评审超时" : "评审服务不可用"));
+        } catch (java.util.concurrent.RejectedExecutionException exception) {
+            return CompletableFuture.completedFuture(ReviewerAgent.absent(displayName, weight, "评审服务繁忙"));
+        }
     }
 
-    private String normalizeDecisionRoute(String modelDecision, String fallbackRoute, int retryCount) {
-        String decision = modelDecision == null ? "" : modelDecision.toLowerCase();
-        if (decision.contains("human_review")) {
+    static String normalizeDecisionRoute(String modelDecision, String fallbackRoute, int retryCount) {
+        if ("human_review".equals(fallbackRoute)) {
             return "human_review";
         }
-        if (decision.contains("retry_collect") && retryCount < 1) {
+        String decision = modelDecision == null ? "" : modelDecision.trim().toLowerCase(java.util.Locale.ROOT);
+        if (decision.equals("human_review")) {
+            return "human_review";
+        }
+        if (decision.equals("retry_collect") && retryCount < 1) {
             return "retry_collect";
         }
-        if (decision.contains("finalize")) {
+        if (decision.equals("finalize")) {
             return "finalize";
         }
         if (fallbackRoute.equals("retry_collect") && retryCount >= 1) {
@@ -979,9 +952,10 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
     private DiagnosticResponse.ReviewerScore toReviewerScore(Map<String, Object> reviewer) {
         return new DiagnosticResponse.ReviewerScore(
                 String.valueOf(reviewer.getOrDefault("name", "Reviewer")),
-                numberValue(reviewer.get("score")),
+                reviewer.containsKey("score") ? numberValue(reviewer.get("score")) : null,
                 numberValue(reviewer.get("weight")),
-                String.valueOf(reviewer.getOrDefault("comment", "同意主模型初步结论"))
+                String.valueOf(reviewer.getOrDefault("comment", "")),
+                (String) reviewer.get("status")
         );
     }
 
@@ -1023,78 +997,13 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         return StringUtils.hasText(fallback) ? fallback : "未命名患者";
     }
 
-    private String currentSessionTitle(Long userId, String sessionId, String fallback) {
-        return loadSessionSnapshots(userId).stream()
-                .filter(session -> session.id().equals(sessionId))
-                .map(SessionSnapshot::title)
-                .filter(StringUtils::hasText)
-                .findFirst()
-                .orElse(fallback);
-    }
-
-    private String currentEvidenceFileName(Long userId, String sessionId) {
-        if (!StringUtils.hasText(sessionId)) {
-            return "";
-        }
-        return loadSessionSnapshots(userId).stream()
-                .filter(session -> session.id().equals(sessionId))
-                .map(SessionSnapshot::evidenceFileName)
-                .filter(StringUtils::hasText)
-                .findFirst()
-                .orElse("");
-    }
-
-    private String formatMessageForAgent(MessageSnapshot message) {
-        String role = "assistant".equals(message.role()) ? "病情整理 Agent" : "患者";
+    private String formatMessageForAgent(MessageHistoryDto message) {
+        String role = "user".equals(message.role()) ? "患者" : "病情整理 Agent";
         return role + "：" + message.content();
     }
 
     private String newSessionId() {
         return "chat-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
-    }
-
-    private SessionSnapshot upsertSession(Long userId, String sessionId, String title, String status, String updatedAt) {
-        return upsertSession(userId, sessionId, title, status, updatedAt, currentEvidenceFileName(userId, sessionId));
-    }
-
-    private SessionSnapshot upsertSession(Long userId, String sessionId, String title, String status, String updatedAt, String evidenceFileName) {
-        List<SessionSnapshot> sessions = new ArrayList<>(loadSessionSnapshots(userId));
-        SessionSnapshot snapshot = new SessionSnapshot(sessionId, title, status, updatedAt, evidenceFileName);
-        sessions.removeIf(session -> session.id().equals(sessionId));
-        sessions.add(0, snapshot);
-        writeJsonWithTtl(sessionKey(userId), sessions, HISTORY_TTL_SECONDS);
-        return snapshot;
-    }
-
-    private List<SessionSnapshot> loadSessionSnapshots(Long userId) {
-        return readJson(sessionKey(userId), SESSION_LIST_TYPE, new ArrayList<>());
-    }
-
-    private List<MessageSnapshot> loadMessageSnapshots(Long userId, String sessionId) {
-        auditLog.info("session_read userId={} sessionId={} resource=messages", userId, sessionId);
-        return readJson(memoryKey(userId, sessionId), MESSAGE_LIST_TYPE, new ArrayList<>());
-    }
-
-    private void saveMessageSnapshots(Long userId, String sessionId, List<MessageSnapshot> history) {
-        List<MessageSnapshot> bounded = history.size() <= MAX_HISTORY_MESSAGES
-                ? history
-                : new ArrayList<>(history.subList(history.size() - MAX_HISTORY_MESSAGES, history.size()));
-        try {
-            String json = objectMapper.writeValueAsString(bounded);
-            redisTemplate.execute(ATOMIC_JSON_SET, List.of(memoryKey(userId, sessionId)), json,
-                    String.valueOf(HISTORY_TTL_SECONDS));
-            auditLog.info("session_write userId={} sessionId={} resource=messages count={}", userId, sessionId, bounded.size());
-        } catch (JsonProcessingException exception) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Redis 会话写入失败");
-        }
-    }
-
-    private void saveDiagnosisSnapshot(Long userId, String sessionId, DiagnosticResponse diagnosis) {
-        writeJsonWithTtl(diagnosisKey(userId, sessionId), diagnosis, HISTORY_TTL_SECONDS);
-    }
-
-    private DiagnosticResponse loadDiagnosisSnapshot(Long userId, String sessionId) {
-        return readJson(diagnosisKey(userId, sessionId), DIAGNOSIS_TYPE, null);
     }
 
     private DiagnosticResponse emptyDiagnosis() {
@@ -1106,35 +1015,6 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
                 List.of("提交病情后，系统会返回真实的 AI 初诊、风险等级和医疗建议。"),
                 List.of()
         );
-    }
-
-    private <T> T readJson(String key, TypeReference<T> type, T fallback) {
-        String json = redisTemplate.opsForValue().get(key);
-        if (!StringUtils.hasText(json)) {
-            return fallback;
-        }
-        try {
-            return objectMapper.readValue(json, type);
-        } catch (JsonProcessingException exception) {
-            return fallback;
-        }
-    }
-
-    private void writeJson(String key, Object value) {
-        writeJsonWithTtl(key, value, 0);
-    }
-
-    private void writeJsonWithTtl(String key, Object value, long ttlSeconds) {
-        try {
-            String json = objectMapper.writeValueAsString(value);
-            if (ttlSeconds > 0) {
-                redisTemplate.execute(ATOMIC_JSON_SET, List.of(key), json, String.valueOf(ttlSeconds));
-            } else {
-                redisTemplate.opsForValue().set(key, json);
-            }
-        } catch (JsonProcessingException exception) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Redis 会话写入失败");
-        }
     }
 
     private String writeJsonString(Object value) {
@@ -1154,46 +1034,6 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         } catch (JsonProcessingException exception) {
             return List.of();
         }
-    }
-
-    private String sessionKey(Long userId) {
-        return "medconsenus:collector:sessions:" + userId;
-    }
-
-    private String memoryKey(Long userId, String sessionId) {
-        return "medconsenus:collector:memory:" + userId + ":" + sessionId;
-    }
-
-    private String diagnosisKey(Long userId, String sessionId) {
-        return "medconsenus:collector:diagnosis:" + userId + ":" + sessionId;
-    }
-
-    private void deleteRedisSessionArtifacts(Long userId, String sessionId) {
-        Set<String> keys = new LinkedHashSet<>();
-        keys.add(memoryKey(userId, sessionId));
-        keys.add(diagnosisKey(userId, sessionId));
-        keys.addAll(scanKeys("medconsenus:collector:*:" + userId + ":" + sessionId));
-        keys.addAll(scanKeys("medconsenus:*:" + userId + ":" + sessionId));
-
-        if (!keys.isEmpty()) {
-            redisTemplate.delete(keys);
-        }
-    }
-
-    private Set<String> scanKeys(String pattern) {
-        return redisTemplate.execute((RedisCallback<Set<String>>) connection -> {
-            Set<String> keys = new LinkedHashSet<>();
-            ScanOptions options = ScanOptions.scanOptions()
-                    .match(pattern)
-                    .count(100)
-                    .build();
-            try (Cursor<byte[]> cursor = connection.keyCommands().scan(options)) {
-                while (cursor.hasNext()) {
-                    keys.add(new String(cursor.next(), java.nio.charset.StandardCharsets.UTF_8));
-                }
-            }
-            return keys;
-        });
     }
 
     private FinalDiagnosisRecordDto toFinalRecordDto(FinalDiagnosisRecord record) {
@@ -1218,18 +1058,4 @@ public class CollectorAgentServiceImpl implements CollectorAgentService {
         );
     }
 
-    private record SessionSnapshot(
-            String id,
-            String title,
-            String status,
-            String updatedAt,
-            String evidenceFileName
-    ) {
-    }
-
-    private record MessageSnapshot(
-            String role,
-            String content
-    ) {
-    }
 }

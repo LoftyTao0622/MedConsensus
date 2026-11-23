@@ -51,6 +51,12 @@ public class PatientConsultation {
     @Column(name = "evidence_file_name", length = 255)
     private String evidenceFileName;
 
+    @Column(name = "evidence_source_id", length = 36)
+    private String evidenceSourceId;
+
+    public String getEvidenceSourceId() { return evidenceSourceId; }
+    public void setEvidenceSourceId(String id) { this.evidenceSourceId = id; }
+
     @Column(name = "evidence_text", columnDefinition = "TEXT")
     private String evidenceText;
 

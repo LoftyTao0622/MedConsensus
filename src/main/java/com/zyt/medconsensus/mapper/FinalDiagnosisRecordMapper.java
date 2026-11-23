@@ -16,14 +16,8 @@ public interface FinalDiagnosisRecordMapper extends JpaRepository<FinalDiagnosis
 
     Optional<FinalDiagnosisRecord> findByUserIdAndSessionId(Long userId, String sessionId);
 
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
     Optional<FinalDiagnosisRecord> findByIdAndUserId(Long id, Long userId);
-
-    Optional<FinalDiagnosisRecord> findByIdAndPatientAccountIdAndPublishedToPatientTrue(
-            Long id,
-            Long patientAccountId
-    );
-
-    void deleteByUserIdAndSessionId(Long userId, String sessionId);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Transactional
@@ -51,5 +45,4 @@ public interface FinalDiagnosisRecordMapper extends JpaRepository<FinalDiagnosis
     @Query("select avg(record.confidence) from FinalDiagnosisRecord record where record.userId = :userId")
     Double averageConfidenceByUserId(@Param("userId") Long userId);
 
-    List<FinalDiagnosisRecord> findByPatientAccountIdAndPublishedToPatientTrueOrderByPublishedAtDesc(Long patientAccountId);
 }

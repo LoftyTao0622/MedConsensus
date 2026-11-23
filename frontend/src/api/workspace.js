@@ -42,6 +42,10 @@ export function fetchPatients() {
   return request("/patients");
 }
 
+export function fetchPatient(patientId) {
+  return request("/patients/" + patientId);
+}
+
 export function createPatient(payload) {
   return request("/patients", {
     method: "POST",
@@ -95,6 +99,8 @@ export function submitConsultation(message, sessionId, patient) {
     body: JSON.stringify({
       message,
       sessionId,
+      patientRecordId: patient?.id || null,
+      medicalEvidenceId: patient?.medicalEvidenceId,
       patientName: patient?.name || "",
       patientPhone: patient?.phone || "",
       patientGender: patient?.gender || "",
@@ -114,8 +120,10 @@ export function importCase(file) {
   return uploadRequest("/import-case", formData);
 }
 
-export function analyzeMedicalEvidence(file) {
+export function analyzeMedicalEvidence(file, { patientRecordId, sessionId } = {}) {
   const formData = new FormData();
+  if (patientRecordId) formData.append("patientRecordId", String(patientRecordId));
+  if (sessionId) formData.append("sessionId", sessionId);
   formData.append("file", file);
   return uploadRequest("/medical-evidence/analyze", formData);
 }
@@ -140,6 +148,16 @@ export function confirmPatientEvidence(consultationId) {
   return request(`/collaboration/consultations/${consultationId}/confirm-evidence`, { method: "POST" });
 }
 
-export function publishDiagnosisRecord(recordId) {
+export function publishDiagnosisRecord(recordId, plan) {
+  if (plan) {
+    return request("/diagnosis-records/" + recordId + "/publish-with-follow-up", {
+      method: "POST",
+      body: JSON.stringify(plan)
+    });
+  }
   return request(`/diagnosis-records/${recordId}/publish`, { method: "POST" });
+}
+
+export function fetchReportRevisions(recordId) {
+  return request(`/diagnosis-records/${recordId}/revisions`);
 }

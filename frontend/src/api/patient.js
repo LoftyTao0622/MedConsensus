@@ -25,7 +25,6 @@ export function fetchPatientDashboard() {
 export function requestDoctorBinding(inviteCode) {
   return request("/bindings", {
     method: "POST",
-    headers: csrfHeaders(),
     body: JSON.stringify({ inviteCode })
   });
 }
@@ -50,6 +49,7 @@ export async function uploadPatientEvidence(consultationId, file) {
   const response = await fetch(`${PATIENT_BASE}/consultations/${consultationId}/evidence`, {
     credentials: "include",
     method: "POST",
+    headers: csrfHeaders(),
     body: formData
   });
   const payload = await response.json().catch(() => ({}));
@@ -63,9 +63,13 @@ export function fetchReportExplanation(reportId) {
   return request(`/reports/${reportId}/explanations`);
 }
 
-export function askReportExplanation(reportId, message) {
+export function fetchPublishedRevisions(reportId) {
+  return request(`/reports/${reportId}/revisions`);
+}
+
+export function askReportExplanation(reportId, message, expectedRevision) {
   return request(`/reports/${reportId}/explanations`, {
     method: "POST",
-    body: JSON.stringify({ message })
+    body: JSON.stringify({ message, expectedRevision })
   });
 }

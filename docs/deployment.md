@@ -120,6 +120,21 @@ JAVA_OPTS=-Xms256m -Xmx768m -Djava.net.preferIPv4Stack=true
 
 `docker/deploy/.env` 包含敏感信息，禁止提交到 GitHub。
 
+### 启用微信或 QQ 网站登录
+
+在微信开放平台或 QQ 互联申请网站应用，使用对应应用的 AppID 和密钥。以下示例中的 `med.example.org` 需替换为用户实际打开的 HTTPS 网站域名，并在各平台配置对应的回调域或回调地址。[微信网站应用登录](https://developers.weixin.qq.com/doc/oplatform/Website_App/WeChat_Login/Wechat_Login.html) · [QQ 网站开发流程](https://wiki.connect.qq.com/开发攻略_server-side/)
+
+| 设置 | 微信 | QQ |
+| --- | --- | --- |
+| 启用 | `WECHAT_LOGIN_ENABLED=true` | `QQ_LOGIN_ENABLED=true` |
+| 应用标识 | `WECHAT_LOGIN_APP_ID` | `QQ_LOGIN_APP_ID` |
+| 服务端密钥 | `WECHAT_LOGIN_APP_SECRET` | `QQ_LOGIN_APP_SECRET`（QQ App Key） |
+| 回调 | `WECHAT_LOGIN_REDIRECT_URI=https://med.example.org/api/auth/social/wechat/callback` | `QQ_LOGIN_REDIRECT_URI=https://med.example.org/api/auth/social/qq/callback` |
+
+在服务器环境变量或部署目录的私有 `.env` 文件填写配置，执行 `docker compose up -d app` 更新应用。Flyway V10 建立第三方身份绑定表。`GET /api/auth/social/providers` 会列出已启用且配置完整的平台。检查外层 HTTPS 代理把回调转发到同一应用并保留原会话 Cookie，回调 URL 中的查询参数应从代理日志中排除。
+
+用户在登录页选择患者或医生，再点击微信或 QQ。首次授权后，用户需输入所选角色的本地手机号和密码以确认绑定。尚无本地账号的用户先走现有注册流程。以后选择同一角色并完成平台授权即可进入相应服务台。第三方登录只读取平台用户标识。
+
 ## 6. 启动服务
 
 进入部署目录：
@@ -292,7 +307,7 @@ docker exec medconsensus-postgres pg_dump -U postgres medconsenus > medconsenus.
 docker exec medconsensus-postgres pg_dump -U postgres vector_db > vector_db.sql
 ```
 
-Redis 当前主要保存会话型数据，Neo4j 保存知识图谱数据，是否备份取决于部署环境和数据价值。
+PostgreSQL 备份应覆盖问诊历史、报告版本、检查原件、随访和第三方账号绑定。Redis 用于并发锁、报告解释缓存及旧会话迁移。Neo4j 保存医学知识图谱。
 
 ## 13. 常见问题
 

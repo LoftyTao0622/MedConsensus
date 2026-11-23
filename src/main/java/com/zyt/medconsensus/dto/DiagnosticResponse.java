@@ -13,9 +13,13 @@ public record DiagnosticResponse(
 ) {
     public record ReviewerScore(
             String name,
-            double score,
+            Double score,
             double weight,
-            String comment
+            String comment,
+            String status
     ) implements Serializable {
+        public ReviewerScore(String name, double score, double weight, String comment) {
+            this(name, score, weight, comment, null);
+        }
     }
 }
